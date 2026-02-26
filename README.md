@@ -7,7 +7,7 @@ BUS Core update "lighthouse": manifest proxy + daily counters + Discord summarie
 A single Cloudflare Worker that:
 
 1. **Proxies** the BUS Core update manifest JSON from a configurable public URL.
-2. **Counts** update checks and "latest download" clicks into deterministic daily totals stored in D1.
+2. **Counts** update checks and "latest download" clicks into deterministic daily totals stored in D1. 
 3. **Posts** daily summaries (yesterday, last 7 days, month-to-date) to a Discord channel via webhook.
 
 ## Endpoints
