@@ -1,0 +1,14 @@
+name = "buscore-lighthouse"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+MANIFEST_URL = "https://example.com/manifest.json"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "buscore-lighthouse"
+database_id = "YOUR_D1_DATABASE_ID"
+
+[triggers]
+crons = ["0 9 * * *"]
