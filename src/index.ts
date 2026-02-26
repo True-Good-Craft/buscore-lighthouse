@@ -118,8 +118,9 @@ export default {
         return Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 });
       }
 
-      const latest = manifest["latest"] as { url?: string } | undefined;
-      const latestUrl = latest?.url;
+      const latestUrl =
+        (manifest as any)?.latest?.download?.url ??
+        (manifest as any)?.latest?.url;
       if (typeof latestUrl !== "string" || !latestUrl) {
         return Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 });
       }
