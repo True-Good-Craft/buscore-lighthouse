@@ -1,0 +1,26 @@
+{
+  "name": "buscore-lighthouse",
+  "version": "1.0.0",
+  "description": "BUS Core update “lighthouse”: manifest proxy + daily counters + Discord summaries.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/truegoodcraft/buscore-lighthouse.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/truegoodcraft/buscore-lighthouse/issues"
+  },
+  "homepage": "https://github.com/truegoodcraft/buscore-lighthouse#readme",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260305.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.69.0"
+  }
+}
