@@ -8,7 +8,7 @@ MANIFEST_URL = "https://buscore.ca/manifest/core/stable.json"
 [[d1_databases]]
 binding = "DB"
 database_name = "buscore-lighthouse"
-database_id = "e46f2daa-7e97-45a3-9bf0-49003a42850c"
+database_id = "7d71a1a1-fb48-4050-8cf3-b489e607d20e"
 
 [triggers]
 crons = ["0 9 * * *"]

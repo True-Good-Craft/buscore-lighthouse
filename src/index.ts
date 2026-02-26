@@ -17,6 +17,10 @@ function utcMonthStart(date: Date = new Date()): string {
     .slice(0, 10);
 }
 
+function json(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}
+
 // Upsert-increment a single counter column for the given day
 async function incrementCounter(
   db: D1Database,
@@ -126,6 +130,27 @@ export default {
       }
 
       return Response.redirect(latestUrl, 302);
+    }
+
+    // GET /test/webhook (temporary)
+    if (url.pathname === "/test/webhook") {
+      const hook = env.DISCORD_WEBHOOK_URL;
+      if (!hook) return json({ ok: false, error: "missing_webhook_secret" }, 500);
+
+      const payload = {
+        content: "buscore-lighthouse webhook test ✅",
+      };
+
+      const r = await fetch(hook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const body = await r.text().catch(() => "");
+      if (!r.ok) return json({ ok: false, status: r.status, body: body.slice(0, 400) }, 502);
+
+      return json({ ok: true }, 200);
     }
 
     // GET /report  (protected)
