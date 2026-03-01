@@ -3,6 +3,7 @@ export interface Env {
   MANIFEST_URL: string;
   DISCORD_WEBHOOK_URL: string;
   ADMIN_TOKEN: string;
+  IGNORED_IP?: string;
 }
 
 // Returns a UTC date as YYYY-MM-DD
@@ -66,19 +67,22 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const today = utcDay();
+    const clientIP = request.headers.get("CF-Connecting-IP");
 
     // GET /update/check
     if (request.method === "GET" && url.pathname === "/update/check") {
       let counterError = false;
-      try {
-        await incrementCounter(env.DB, today, "update_checks");
-      } catch {
-        counterError = true;
+      if (!(clientIP && env.IGNORED_IP && clientIP === env.IGNORED_IP)) {
+        try {
+          await incrementCounter(env.DB, today, "update_checks");
+        } catch {
+          counterError = true;
+        }
       }
 
       const manifest = await fetchManifest(env.MANIFEST_URL);
 
-      if (counterError) {
+      if (counterError && !(clientIP && env.IGNORED_IP && clientIP === env.IGNORED_IP)) {
         try {
           await incrementCounter(env.DB, today, "errors");
         } catch {
@@ -98,15 +102,17 @@ export default {
     // GET /download/latest
     if (request.method === "GET" && url.pathname === "/download/latest") {
       let counterError = false;
-      try {
-        await incrementCounter(env.DB, today, "downloads");
-      } catch {
-        counterError = true;
+      if (!(clientIP && env.IGNORED_IP && clientIP === env.IGNORED_IP)) {
+        try {
+          await incrementCounter(env.DB, today, "downloads");
+        } catch {
+          counterError = true;
+        }
       }
 
       const manifest = await fetchManifest(env.MANIFEST_URL);
 
-      if (counterError) {
+      if (counterError && !(clientIP && env.IGNORED_IP && clientIP === env.IGNORED_IP)) {
         try {
           await incrementCounter(env.DB, today, "errors");
         } catch {
