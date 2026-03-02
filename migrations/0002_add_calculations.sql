@@ -1,0 +1,1 @@
+ALTER TABLE metrics_daily ADD COLUMN calculations INTEGER NOT NULL DEFAULT 0;

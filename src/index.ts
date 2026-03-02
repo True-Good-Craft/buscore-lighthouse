@@ -1,6 +1,5 @@
 export interface Env {
   DB: D1Database;
-  LIGHTHOUSE_KV: KVNamespace;
   MANIFEST_URL: string;
   DISCORD_WEBHOOK_URL: string;
   ADMIN_TOKEN: string;
@@ -24,11 +23,11 @@ function utcMonthStart(date: Date = new Date()): string {
 async function incrementCounter(
   db: D1Database,
   day: string,
-  column: "update_checks" | "downloads" | "errors"
+  column: "update_checks" | "downloads" | "errors" | "calculations"
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO metrics_daily(day, update_checks, downloads, errors) VALUES (?,0,0,0) ON CONFLICT(day) DO NOTHING"
+      "INSERT INTO metrics_daily(day, update_checks, downloads, errors, calculations) VALUES (?,0,0,0,0) ON CONFLICT(day) DO NOTHING"
     )
     .bind(day)
     .run();
@@ -54,14 +53,14 @@ async function queryTotals(
   db: D1Database,
   startDay: string,
   endDay: string
-): Promise<{ update_checks: number; downloads: number; errors: number }> {
+): Promise<{ update_checks: number; downloads: number; errors: number; calculations: number }> {
   const row = await db
     .prepare(
-      "SELECT COALESCE(SUM(update_checks),0) AS update_checks, COALESCE(SUM(downloads),0) AS downloads, COALESCE(SUM(errors),0) AS errors FROM metrics_daily WHERE day >= ? AND day <= ?"
+      "SELECT COALESCE(SUM(update_checks),0) AS update_checks, COALESCE(SUM(downloads),0) AS downloads, COALESCE(SUM(errors),0) AS errors, COALESCE(SUM(calculations),0) AS calculations FROM metrics_daily WHERE day >= ? AND day <= ?"
     )
     .bind(startDay, endDay)
-    .first<{ update_checks: number; downloads: number; errors: number }>();
-  return row ?? { update_checks: 0, downloads: 0, errors: 0 };
+    .first<{ update_checks: number; downloads: number; errors: number; calculations: number }>();
+  return row ?? { update_checks: 0, downloads: 0, errors: 0, calculations: 0 };
 }
 
 export default {
@@ -87,18 +86,8 @@ export default {
         return new Response(null, { status: 403 });
       }
 
-      let currentRaw: string | null;
       try {
-        currentRaw = await env.LIGHTHOUSE_KV.get("pg_total");
-      } catch {
-        return new Response(null, { status: 500 });
-      }
-
-      const currentCount = parseInt(currentRaw ?? "0", 10);
-      const nextCount = currentCount + 1;
-
-      try {
-        await env.LIGHTHOUSE_KV.put("pg_total", String(nextCount));
+        await incrementCounter(env.DB, today, "calculations");
       } catch {
         return new Response(null, { status: 500 });
       }
@@ -221,9 +210,9 @@ export default {
 
     const monthStart = utcMonthStart(todayDate);
 
-    let yesterdayTotals: { update_checks: number; downloads: number; errors: number };
-    let last7Totals: { update_checks: number; downloads: number; errors: number };
-    let mtdTotals: { update_checks: number; downloads: number; errors: number };
+    let yesterdayTotals: { update_checks: number; downloads: number; errors: number; calculations: number };
+    let last7Totals: { update_checks: number; downloads: number; errors: number; calculations: number };
+    let mtdTotals: { update_checks: number; downloads: number; errors: number; calculations: number };
 
     try {
       [yesterdayTotals, last7Totals, mtdTotals] = await Promise.all([
@@ -246,16 +235,19 @@ export default {
       `**Yesterday (${yesterday})**`,
       `  • Update checks: ${yesterdayTotals.update_checks}`,
       `  • Downloads: ${yesterdayTotals.downloads}`,
+      `  • Calculations: ${yesterdayTotals.calculations}`,
       `  • Errors: ${yesterdayTotals.errors}`,
       "",
       `**Last 7 days (${sevenDaysAgo} → ${today})**`,
       `  • Update checks: ${last7Totals.update_checks}`,
       `  • Downloads: ${last7Totals.downloads}`,
+      `  • Calculations: ${last7Totals.calculations}`,
       `  • Errors: ${last7Totals.errors}`,
       "",
       `**Month to date (${monthStart} → ${today})**`,
       `  • Update checks: ${mtdTotals.update_checks}`,
       `  • Downloads: ${mtdTotals.downloads}`,
+      `  • Calculations: ${mtdTotals.calculations}`,
       `  • Errors: ${mtdTotals.errors}`,
     ].join("\n");
 
