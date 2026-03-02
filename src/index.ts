@@ -1,8 +1,10 @@
 export interface Env {
   DB: D1Database;
+  LIGHTHOUSE_KV: KVNamespace;
   MANIFEST_URL: string;
   DISCORD_WEBHOOK_URL: string;
   ADMIN_TOKEN: string;
+  PRICE_GUARD_KEY: string;
   IGNORED_IP?: string;
 }
 
@@ -68,6 +70,41 @@ export default {
     const url = new URL(request.url);
     const today = utcDay();
     const clientIP = request.headers.get("CF-Connecting-IP");
+
+    // /pg/ping
+    if (url.pathname === "/pg/ping") {
+      if (request.method !== "POST") {
+        return new Response(null, { status: 405 });
+      }
+
+      const priceGuardKey = request.headers.get("X-PG-Key");
+      if (priceGuardKey !== env.PRICE_GUARD_KEY) {
+        return new Response(null, { status: 401 });
+      }
+
+      const origin = request.headers.get("Origin");
+      if (origin !== "https://priceguard.truegoodcraft.ca") {
+        return new Response(null, { status: 403 });
+      }
+
+      let currentRaw: string | null;
+      try {
+        currentRaw = await env.LIGHTHOUSE_KV.get("pg_total");
+      } catch {
+        return new Response(null, { status: 500 });
+      }
+
+      const currentCount = parseInt(currentRaw ?? "0", 10);
+      const nextCount = currentCount + 1;
+
+      try {
+        await env.LIGHTHOUSE_KV.put("pg_total", String(nextCount));
+      } catch {
+        return new Response(null, { status: 500 });
+      }
+
+      return new Response(null, { status: 204 });
+    }
 
     // GET /update/check
     if (request.method === "GET" && url.pathname === "/update/check") {
