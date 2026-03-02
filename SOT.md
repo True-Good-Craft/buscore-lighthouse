@@ -330,96 +330,34 @@ For each counter:
 
 ## SoT Delta — Price Guard Ping Endpoint
 
-Status: intended to be implemented; behavior below defines the approved delta for Lighthouse.
+### State & Persistence (Updated)
 
-### 1️⃣ Entry Points
-
-#### POST /pg/ping
-
-- Method: `POST` only.
-- Purpose: increment Price Guard calculation counter.
-- Expected headers:
-  - `X-PG-Key`
-  - `Origin`
-- Authentication:
-  - Header-based shared secret comparison.
-  - Origin validation.
-- Body:
-  - Optional JSON payload (for example, version string).
-- Response:
-  - `204 No Content` on success.
-  - `401 Unauthorized` if key invalid.
-  - `403 Forbidden` if origin invalid.
-  - `405 Method Not Allowed` if wrong method.
-- Failure behavior:
-  - Does not affect Price Guard functionality.
-  - Failures are silent on client side.
-
-### 2️⃣ State & Persistence
-
-- KV namespace binding: `LIGHTHOUSE_KV`.
-- KV key: `pg_total`.
-- Data type: stringified integer.
+- Storage backend: Cloudflare D1
+- Table: `metrics_daily`
+- Column: `calculations`
 - Increment behavior:
-  - Read-modify-write.
-  - Non-atomic.
-  - Subject to eventual consistency.
-- TTL behavior:
-  - No TTL.
-- Per-client tracking:
-  - No per-IP tracking.
-- Payload persistence:
-  - No payload storage.
-- Stored value scope:
-  - Only total incremented count is stored.
+  - Uses existing `incrementCounter(DB, day, "calculations")`
+  - Same insert-then-update pattern as other metrics
+- TTL behavior: None
+- Per-client tracking: None
+- Payload storage: None
+- Only daily aggregate count is stored
 
-Cloudflare KV is eventually consistent. Concurrent writes may theoretically result in race conditions under high traffic.
+### CORS Behavior
 
-### 3️⃣ Authentication & Authorization
+- OPTIONS preflight handled
+- Allowed origin: `https://priceguard.truegoodcraft.ca`
+- Allowed methods: `POST, OPTIONS`
+- Allowed headers: `Content-Type, X-PG-Key`
+- No wildcard origin
+- CORS applied only to `/pg/ping`
 
-- Shared secret comparison using `X-PG-Key`.
-- Secret stored as Wrangler secret (example: `PRICE_GUARD_KEY`).
-- Static origin allowlist: `https://priceguard.truegoodcraft.ca`.
-- Origin header must match exactly. No wildcard support.
-- No dynamic token issuance.
-- No OAuth.
-- No user-level authentication.
+### Determinism & Guarantees
 
-### 4️⃣ Metrics & Counters
-
-- Counter: `pg_total`.
-- Increment trigger: external `POST` from Price Guard.
-- Deduplication:
-  - None.
-- Replay protection:
-  - None beyond header check.
-- Rate limiting:
-  - None unless separately implemented.
-
-### 5️⃣ Failure Behavior
-
-- If KV read fails: endpoint returns `500`.
-- If KV write fails: endpoint returns `500`.
-- Client is not dependent on success.
-- Lighthouse does not retry.
-- No backoff logic.
-
-### 6️⃣ Security Surface Summary
-
-- Publicly exposed endpoint: `/pg/ping`.
-- Protected via shared secret.
-- No PII accepted.
-- No pricing data accepted.
-- Endpoint behavior only increments counter.
-
-The endpoint is designed for lightweight signal aggregation, not analytics or data collection.
-
-### 7️⃣ Determinism & Guarantees
-
-- Increment operations are non-atomic read-modify-write.
-- Counter is monotonic (never decremented).
-- Under low traffic, counter accuracy is expected.
-- Under high concurrency, theoretical undercount is possible.
-- No financial or critical logic depends on this counter.
+- Monotonic increment
+- No per-event storage
+- No user-level tracking
+- Included in `/report`
+- Included in scheduled Discord summary
 
 Delta complete.

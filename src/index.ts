@@ -72,27 +72,42 @@ export default {
 
     // /pg/ping
     if (url.pathname === "/pg/ping") {
+      const pgCorsHeaders = {
+        "Access-Control-Allow-Origin": "https://priceguard.truegoodcraft.ca",
+      };
+
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            ...pgCorsHeaders,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-PG-Key",
+          },
+        });
+      }
+
       if (request.method !== "POST") {
-        return new Response(null, { status: 405 });
+        return new Response(null, { status: 405, headers: pgCorsHeaders });
       }
 
       const priceGuardKey = request.headers.get("X-PG-Key");
       if (priceGuardKey !== env.PRICE_GUARD_KEY) {
-        return new Response(null, { status: 401 });
+        return new Response(null, { status: 401, headers: pgCorsHeaders });
       }
 
       const origin = request.headers.get("Origin");
       if (origin !== "https://priceguard.truegoodcraft.ca") {
-        return new Response(null, { status: 403 });
+        return new Response(null, { status: 403, headers: pgCorsHeaders });
       }
 
       try {
         await incrementCounter(env.DB, today, "calculations");
       } catch {
-        return new Response(null, { status: 500 });
+        return new Response(null, { status: 500, headers: pgCorsHeaders });
       }
 
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 204, headers: pgCorsHeaders });
     }
 
     // GET /update/check
