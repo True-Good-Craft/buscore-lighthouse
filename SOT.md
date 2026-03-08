@@ -361,3 +361,18 @@ For each counter:
 - Included in scheduled Discord summary
 
 Delta complete.
+
+
+## SoT Delta — Automated Manifest Source
+
+Lighthouse continues to proxy the manifest defined by the environment variable `MANIFEST_URL`.
+
+The source of the manifest file may now be generated automatically via external release pipelines (e.g. GitHub Actions).
+
+No changes are required to Lighthouse logic.
+
+Endpoints remain:
+
+GET /update/check
+GET /download/latest
+GET /report
