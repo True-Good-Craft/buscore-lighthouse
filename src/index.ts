@@ -1,6 +1,6 @@
 export interface Env {
   DB: D1Database;
-  BUSCORE_BUCKET: R2Bucket;
+  MANIFEST_R2: R2Bucket;
 }
 
 type CounterColumn = "update_checks" | "downloads" | "errors";
@@ -36,7 +36,7 @@ async function incrementErrorCounterBestEffort(db: D1Database, day: string): Pro
 }
 
 async function readManifestFromR2(env: Env): Promise<{ raw: string; parsed: Record<string, unknown> }> {
-  const object = await env.BUSCORE_BUCKET.get(MANIFEST_KEY);
+  const object = await env.MANIFEST_R2.get(MANIFEST_KEY);
   if (!object) {
     throw new Error("manifest_not_found");
   }
@@ -83,7 +83,8 @@ export default {
 
     if (url.pathname === MANIFEST_PATH) {
       try {
-        const obj = await env.BUSCORE_BUCKET.get(MANIFEST_KEY);
+        const key = "manifest/core/stable.json";
+        const obj = await env.MANIFEST_R2.get(key);
 
         if (!obj) {
           await incrementErrorCounterBestEffort(env.DB, day);
@@ -99,7 +100,7 @@ export default {
           status: 200,
           headers: {
             "Content-Type": "application/json",
-            "Cache-Control": "public, max-age=60",
+            "Cache-Control": "public, max-age=60, s-maxage=60",
           },
         });
       } catch {
