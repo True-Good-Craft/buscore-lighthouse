@@ -9,6 +9,12 @@ const MANIFEST_PATH = "/manifest/core/stable.json";
 const MANIFEST_KEY = "manifest/core/stable.json";
 const RELEASE_ARTIFACT_PATH = /^\/releases\/([^/]+)\/TGC-BUS-Core-\1\.zip$/;
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 function utcDay(date: Date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }
@@ -72,13 +78,30 @@ async function querySummary(db: D1Database): Promise<{ update_checks: number; do
   return row ?? { update_checks: 0, downloads: 0, errors: 0 };
 }
 
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    headers.set(key, value);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const day = utcDay();
 
+    if (request.method === "OPTIONS") {
+      return withCors(new Response(null, { status: 200 }));
+    }
+
     if (request.method !== "GET") {
-      return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405 });
+      return withCors(Response.json({ ok: false, error: "method_not_allowed" }, { status: 405 }));
     }
 
     if (url.pathname === MANIFEST_PATH) {
@@ -88,29 +111,35 @@ export default {
 
         if (!obj) {
           await incrementErrorCounterBestEffort(env.DB, day);
-          return new Response(JSON.stringify({ ok: false, error: "manifest_unavailable" }), {
+          return withCors(
+            new Response(JSON.stringify({ ok: false, error: "manifest_unavailable" }), {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+              },
+            })
+          );
+        }
+
+        return withCors(
+          new Response(obj.body, {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "public, max-age=60, s-maxage=60",
+            },
+          })
+        );
+      } catch {
+        await incrementErrorCounterBestEffort(env.DB, day);
+        return withCors(
+          new Response(JSON.stringify({ ok: false, error: "manifest_unavailable" }), {
             status: 503,
             headers: {
               "Content-Type": "application/json",
             },
-          });
-        }
-
-        return new Response(obj.body, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "public, max-age=60, s-maxage=60",
-          },
-        });
-      } catch {
-        await incrementErrorCounterBestEffort(env.DB, day);
-        return new Response(JSON.stringify({ ok: false, error: "manifest_unavailable" }), {
-          status: 503,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
+          })
+        );
       }
     }
 
@@ -118,16 +147,18 @@ export default {
       try {
         await incrementCounter(env.DB, day, "update_checks");
         const manifest = await readManifestFromR2(env);
-        return new Response(manifest.raw, {
-          status: 200,
-          headers: {
-            "Cache-Control": "no-store",
-            "Content-Type": "application/json",
-          },
-        });
+        return withCors(
+          new Response(manifest.raw, {
+            status: 200,
+            headers: {
+              "Cache-Control": "no-store",
+              "Content-Type": "application/json",
+            },
+          })
+        );
       } catch {
         await incrementErrorCounterBestEffort(env.DB, day);
-        return Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 });
+        return withCors(Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 }));
       }
     }
 
@@ -139,26 +170,26 @@ export default {
 
         if (!latestUrl || !isValidReleaseArtifactUrl(latestUrl)) {
           await incrementErrorCounterBestEffort(env.DB, day);
-          return Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 });
+          return withCors(Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 }));
         }
 
-        return Response.redirect(latestUrl, 302);
+        return withCors(Response.redirect(latestUrl, 302));
       } catch {
         await incrementErrorCounterBestEffort(env.DB, day);
-        return Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 });
+        return withCors(Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 }));
       }
     }
 
     if (url.pathname === "/report") {
       try {
         const summary = await querySummary(env.DB);
-        return Response.json(summary, { status: 200 });
+        return withCors(Response.json(summary, { status: 200 }));
       } catch {
         await incrementErrorCounterBestEffort(env.DB, day);
-        return Response.json({ ok: false, error: "report_unavailable" }, { status: 503 });
+        return withCors(Response.json({ ok: false, error: "report_unavailable" }, { status: 503 }));
       }
     }
 
-    return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+    return withCors(Response.json({ ok: false, error: "not_found" }, { status: 404 }));
   },
 };
