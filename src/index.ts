@@ -68,14 +68,35 @@ function isValidReleaseArtifactUrl(rawUrl: string): boolean {
   }
 }
 
-async function querySummary(db: D1Database): Promise<{ update_checks: number; downloads: number; errors: number }> {
+type MetricTotals = { update_checks: number; downloads: number; errors: number };
+
+function addUtcDays(base: Date, days: number): Date {
+  const next = new Date(base);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function utcMonthStart(base: Date): string {
+  return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), 1)).toISOString().slice(0, 10);
+}
+
+async function queryTotalsInRange(db: D1Database, startDay: string, endDay: string): Promise<MetricTotals> {
   const row = await db
     .prepare(
-      "SELECT COALESCE(SUM(update_checks),0) AS update_checks, COALESCE(SUM(downloads),0) AS downloads, COALESCE(SUM(errors),0) AS errors FROM metrics_daily"
+      "SELECT COALESCE(SUM(update_checks),0) AS update_checks, COALESCE(SUM(downloads),0) AS downloads, COALESCE(SUM(errors),0) AS errors FROM metrics_daily WHERE day >= ? AND day <= ?"
     )
-    .first<{ update_checks: number; downloads: number; errors: number }>();
+    .bind(startDay, endDay)
+    .first<MetricTotals>();
 
   return row ?? { update_checks: 0, downloads: 0, errors: 0 };
+}
+
+function percentChange(current: number, baseline: number): number {
+  return ((current - baseline) / Math.max(1, baseline)) * 100;
+}
+
+function safeRatio(numerator: number, denominator: number): number {
+  return numerator / Math.max(1, denominator);
 }
 
 function withCors(response: Response): Response {
@@ -182,8 +203,40 @@ export default {
 
     if (url.pathname === "/report") {
       try {
-        const summary = await querySummary(env.DB);
-        return withCors(Response.json(summary, { status: 200 }));
+        const now = new Date();
+        const todayDay = utcDay(now);
+        const yesterdayDay = utcDay(addUtcDays(now, -1));
+        const last7StartDay = utcDay(addUtcDays(now, -6));
+        const previous7StartDay = utcDay(addUtcDays(now, -13));
+        const previous7EndDay = utcDay(addUtcDays(now, -7));
+        const monthStartDay = utcMonthStart(now);
+
+        const [today, yesterday, last7Days, previous7Days, monthToDate] = await Promise.all([
+          queryTotalsInRange(env.DB, todayDay, todayDay),
+          queryTotalsInRange(env.DB, yesterdayDay, yesterdayDay),
+          queryTotalsInRange(env.DB, last7StartDay, todayDay),
+          queryTotalsInRange(env.DB, previous7StartDay, previous7EndDay),
+          queryTotalsInRange(env.DB, monthStartDay, todayDay),
+        ]);
+
+        return withCors(
+          Response.json(
+            {
+              today,
+              yesterday,
+              last_7_days: last7Days,
+              month_to_date: monthToDate,
+              trends: {
+                downloads_change_percent: percentChange(today.downloads, yesterday.downloads),
+                update_checks_change_percent: percentChange(today.update_checks, yesterday.update_checks),
+                weekly_downloads_change_percent: percentChange(last7Days.downloads, previous7Days.downloads),
+                weekly_update_checks_change_percent: percentChange(last7Days.update_checks, previous7Days.update_checks),
+                conversion_ratio: safeRatio(today.downloads, today.update_checks),
+              },
+            },
+            { status: 200 }
+          )
+        );
       } catch {
         await incrementErrorCounterBestEffort(env.DB, day);
         return withCors(Response.json({ ok: false, error: "report_unavailable" }, { status: 503 }));

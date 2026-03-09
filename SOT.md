@@ -149,6 +149,29 @@
   - `downloads`
   - `errors`
 
+### Derived Metrics
+
+- Reporting now includes computed trend values in `/report` under `trends`.
+- Derived values are computed in memory from existing `metrics_daily` aggregates.
+- No new counters, tables, or storage backends are introduced.
+- The metrics system remains aggregate-only.
+
+Derived fields:
+
+- `daily_change`
+  - Implemented as `downloads_change_percent` and `update_checks_change_percent`.
+  - Compares `today` vs `yesterday`.
+  - Formula: `((today - yesterday) / max(1, yesterday)) * 100`.
+
+- `weekly_change`
+  - Implemented as `weekly_downloads_change_percent` and `weekly_update_checks_change_percent`.
+  - Compares `last_7_days` vs `previous_7_days`.
+  - Uses the same zero-safe percentage formula.
+
+- `conversion_ratio`
+  - Formula: `downloads / max(1, update_checks)`.
+  - Represents install conversion for the current day window in `/report`.
+
 For each counter:
 
 - `update_checks`
