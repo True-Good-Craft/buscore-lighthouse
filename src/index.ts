@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   MANIFEST_R2: R2Bucket;
   ADMIN_TOKEN: string;
+  IGNORED_IP: string;
 }
 
 type CounterColumn = "update_checks" | "downloads" | "errors";
@@ -18,6 +19,17 @@ const CORS_HEADERS: Record<string, string> = {
 
 function utcDay(date: Date = new Date()): string {
   return date.toISOString().slice(0, 10);
+}
+
+function getClientIp(request: Request): string | null {
+  const ip = request.headers.get("CF-Connecting-IP");
+  return ip && ip.trim() ? ip.trim() : null;
+}
+
+function shouldSkipCounting(clientIp: string | null, ignoredIp: string | undefined): boolean {
+  if (!ignoredIp || !ignoredIp.trim()) return false;
+  if (!clientIp) return false;
+  return clientIp === ignoredIp.trim();
 }
 
 async function incrementCounter(db: D1Database, day: string, column: CounterColumn): Promise<void> {
@@ -167,7 +179,9 @@ export default {
 
     if (url.pathname === "/update/check") {
       try {
-        await incrementCounter(env.DB, day, "update_checks");
+        if (!shouldSkipCounting(getClientIp(request), env.IGNORED_IP)) {
+          await incrementCounter(env.DB, day, "update_checks");
+        }
         const manifest = await readManifestFromR2(env);
         return withCors(
           new Response(manifest.raw, {
@@ -186,7 +200,9 @@ export default {
 
     if (url.pathname === "/download/latest") {
       try {
-        await incrementCounter(env.DB, day, "downloads");
+        if (!shouldSkipCounting(getClientIp(request), env.IGNORED_IP)) {
+          await incrementCounter(env.DB, day, "downloads");
+        }
         const manifest = await readManifestFromR2(env);
         const latestUrl = extractLatestDownloadUrl(manifest.parsed);
 

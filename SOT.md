@@ -17,12 +17,12 @@
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` when unavailable.
 
 - `GET /update/check`
-  - Increments `update_checks` in D1 for current UTC day.
+  - Increments `update_checks` in D1 for current UTC day, unless the request IP matches `IGNORED_IP`.
   - Returns manifest JSON.
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` on manifest errors.
 
 - `GET /download/latest`
-  - Increments `downloads` in D1 for current UTC day.
+  - Increments `downloads` in D1 for current UTC day, unless the request IP matches `IGNORED_IP`.
   - Redirects (`302`) to the validated release artifact URL from `manifest.latest.download.url`.
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` when URL is missing/invalid.
 
@@ -53,6 +53,7 @@ Required bindings/secrets used by code:
 - `DB`
 - `MANIFEST_R2`
 - `ADMIN_TOKEN`
+- `IGNORED_IP` — optional; if set, requests whose `CF-Connecting-IP` exactly matches this value skip counter increments but receive normal responses.
 
 Not used by current code:
 
