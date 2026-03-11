@@ -24,7 +24,14 @@
 - `GET /download/latest`
   - Increments `downloads` in D1 for current UTC day, unless the request IP matches `IGNORED_IP`.
   - Redirects (`302`) to the validated release artifact URL from `manifest.latest.download.url`.
+  - Accepts either a relative release URL (for example `/releases/TGC-BUS-Core-1.0.2.zip`) or an absolute URL using the same release path format.
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` when URL is missing/invalid.
+
+- `GET /releases/:filename`
+  - Serves release artifacts directly from `MANIFEST_R2` using key `releases/:filename`.
+  - Allowed filename format: `TGC-BUS-Core-<semver>.zip`.
+  - Returns `200` with artifact body when object exists.
+  - Returns `404` JSON `{ "ok": false, "error": "not_found" }` when missing or filename is invalid.
 
 - `GET /report`
   - Requires header `X-Admin-Token`.

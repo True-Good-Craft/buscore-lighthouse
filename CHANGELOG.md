@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] - 2026-03-11
+
+### Fixed
+- Fix release download path handling so `manifest.latest.download.url` values like `/releases/TGC-BUS-Core-1.0.2.zip` are accepted and redirected correctly by `/download/latest`.
+- Add `GET /releases/:filename` to stream release artifacts from R2 key `releases/:filename` so public Lighthouse release URLs no longer return `not_found` when the object exists.
+
 ## [1.1.0] - 2026-03-10
 
 ### Added

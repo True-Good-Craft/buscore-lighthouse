@@ -9,7 +9,8 @@ type CounterColumn = "update_checks" | "downloads" | "errors";
 
 const MANIFEST_PATH = "/manifest/core/stable.json";
 const MANIFEST_KEY = "manifest/core/stable.json";
-const RELEASE_ARTIFACT_PATH = /^\/releases\/([^/]+)\/TGC-BUS-Core-\1\.zip$/;
+const RELEASE_PATH = /^\/releases\/([^/]+)$/;
+const RELEASE_FILENAME = /^TGC-BUS-Core-[0-9]+\.[0-9]+\.[0-9]+\.zip$/;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -74,10 +75,24 @@ function extractLatestDownloadUrl(manifest: Record<string, unknown>): string | n
 
 function isValidReleaseArtifactUrl(rawUrl: string): boolean {
   try {
-    const parsed = new URL(rawUrl);
-    return RELEASE_ARTIFACT_PATH.test(parsed.pathname);
+    const parsed = new URL(rawUrl, "https://lighthouse.invalid");
+    const releaseMatch = parsed.pathname.match(RELEASE_PATH);
+    if (!releaseMatch) return false;
+    return RELEASE_FILENAME.test(releaseMatch[1]);
   } catch {
     return false;
+  }
+}
+
+function toAbsoluteReleaseUrl(rawUrl: string, requestOrigin: string): string | null {
+  if (!isValidReleaseArtifactUrl(rawUrl)) {
+    return null;
+  }
+
+  try {
+    return new URL(rawUrl, requestOrigin).toString();
+  } catch {
+    return null;
   }
 }
 
@@ -140,8 +155,7 @@ export default {
 
     if (url.pathname === MANIFEST_PATH) {
       try {
-        const key = "manifest/core/stable.json";
-        const obj = await env.MANIFEST_R2.get(key);
+        const obj = await env.MANIFEST_R2.get(MANIFEST_KEY);
 
         if (!obj) {
           await incrementErrorCounterBestEffort(env.DB, day);
@@ -205,17 +219,47 @@ export default {
         }
         const manifest = await readManifestFromR2(env);
         const latestUrl = extractLatestDownloadUrl(manifest.parsed);
+        const redirectUrl = latestUrl ? toAbsoluteReleaseUrl(latestUrl, url.origin) : null;
 
-        if (!latestUrl || !isValidReleaseArtifactUrl(latestUrl)) {
+        if (!redirectUrl) {
           await incrementErrorCounterBestEffort(env.DB, day);
           return withCors(Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 }));
         }
 
-        return withCors(Response.redirect(latestUrl, 302));
+        return withCors(Response.redirect(redirectUrl, 302));
       } catch {
         await incrementErrorCounterBestEffort(env.DB, day);
         return withCors(Response.json({ ok: false, error: "manifest_unavailable" }, { status: 503 }));
       }
+    }
+
+    const releaseMatch = url.pathname.match(RELEASE_PATH);
+    if (releaseMatch) {
+      const filename = releaseMatch[1];
+
+      if (!RELEASE_FILENAME.test(filename)) {
+        return withCors(Response.json({ ok: false, error: "not_found" }, { status: 404 }));
+      }
+
+      const object = await env.MANIFEST_R2.get(`releases/${filename}`);
+      if (!object) {
+        return withCors(Response.json({ ok: false, error: "not_found" }, { status: 404 }));
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("ETag", object.httpEtag);
+      headers.set("Cache-Control", "public, max-age=300, s-maxage=300");
+      if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/zip");
+      }
+
+      return withCors(
+        new Response(object.body, {
+          status: 200,
+          headers,
+        })
+      );
     }
 
     if (url.pathname === "/report") {
