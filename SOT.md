@@ -19,12 +19,9 @@
   - Returns `200` manifest JSON on success.
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` when unavailable.
 
-- `GET /update/check` — **Manifest proxy with conditional counting gate**
-  - Returns manifest JSON from `MANIFEST_R2` in all cases (with or without header).
-  - Increments `update_checks` in D1 (current UTC day) **only when both conditions are true**:
-    - Request header `X-BUS-Update-Source` equals exactly `core`, AND
-    - Request IP does not match `IGNORED_IP`
-  - Intended to be called by BUS Core with the `X-BUS-Update-Source: core` header to count genuine update checks.
+- `GET /update/check` — **Manifest proxy with update check counting**
+  - Returns manifest JSON from `MANIFEST_R2`.
+  - Increments `update_checks` in D1 (current UTC day) **unless** request IP matches `IGNORED_IP`.
   - Returns `503` JSON `{ "ok": false, "error": "manifest_unavailable" }` on manifest errors.
 
 ### Download Service

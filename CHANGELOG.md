@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] - 2026-03-12
+
+### Changed
+- `GET /update/check` now increments `update_checks` for all requests (unless IP is in `IGNORED_IP`), removing the requirement for `X-BUS-Update-Source: core` header.
+- Restored simple counting logic to `/update/check` while maintaining manifest/download route split.
+
 ## [1.2.0] - 2026-03-12
 
 ### Fixed

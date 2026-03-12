@@ -193,8 +193,7 @@ export default {
 
     if (url.pathname === "/update/check") {
       try {
-        const sourceHeader = request.headers.get("X-BUS-Update-Source");
-        if (sourceHeader === "core" && !shouldSkipCounting(getClientIp(request), env.IGNORED_IP)) {
+        if (!shouldSkipCounting(getClientIp(request), env.IGNORED_IP)) {
           await incrementCounter(env.DB, day, "update_checks");
         }
         const manifest = await readManifestFromR2(env);
