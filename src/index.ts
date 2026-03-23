@@ -8,15 +8,16 @@ export interface Env {
 }
 
 type CounterColumn = "update_checks" | "downloads" | "errors";
-type TrafficTotals = { row_count: number; visits: number | null; pageviews: number | null };
-type TrafficRow = { day: string; visits: number | null; pageviews: number; referrer_summary: string | null };
+type TrafficTotals = { row_count: number; visits: number | null; requests: number | null };
+type TrafficRow = { day: string; visits: number | null; requests: number; referrer_summary: string | null };
 type CloudflareGraphQLResponse = {
   data?: {
     viewer?: {
       zones?: Array<{
         buscoreTraffic?: Array<{
+          count?: number | null;
           sum?: {
-            pageViews?: number | null;
+            visits?: number | null;
           };
         }>;
       }>;
@@ -43,8 +44,9 @@ const BUSCORE_TRAFFIC_QUERY = `query DailyBuscoreTraffic($zoneTag: string, $star
           requestSource: "eyeball"
         }
       ) {
+        count
         sum {
-          pageViews
+          visits
         }
       }
     }
@@ -161,46 +163,46 @@ async function queryTotalsInRange(db: D1Database, startDay: string, endDay: stri
 async function queryTrafficTotalsInRange(db: D1Database, startDay: string, endDay: string): Promise<TrafficTotals> {
   const row = await db
     .prepare(
-      "SELECT COUNT(*) AS row_count, CASE WHEN COUNT(visits) = 0 THEN NULL ELSE SUM(visits) END AS visits, CASE WHEN COUNT(*) = 0 THEN NULL ELSE SUM(pageviews) END AS pageviews FROM buscore_traffic_daily WHERE day >= ? AND day <= ?"
+      "SELECT COUNT(*) AS row_count, CASE WHEN COUNT(visits) = 0 THEN NULL ELSE SUM(visits) END AS visits, CASE WHEN COUNT(*) = 0 THEN NULL ELSE SUM(requests) END AS requests FROM buscore_traffic_daily WHERE day >= ? AND day <= ?"
     )
     .bind(startDay, endDay)
     .first<TrafficTotals>();
 
-  return row ?? { row_count: 0, visits: null, pageviews: null };
+  return row ?? { row_count: 0, visits: null, requests: null };
 }
 
 async function queryLatestTrafficRow(db: D1Database): Promise<TrafficRow | null> {
   const row = await db
     .prepare(
-      "SELECT day, visits, pageviews, referrer_summary FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
+      "SELECT day, visits, requests, referrer_summary FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
     )
     .first<TrafficRow>();
 
   return row ?? null;
 }
 
-function trafficWindowFromTotals(totals: TrafficTotals): { visits: number | null; pageviews: number | null; referrer_summary: string | null } {
+function trafficWindowFromTotals(totals: TrafficTotals): { visits: number | null; requests: number | null; referrer_summary: string | null } {
   if (totals.row_count === 0) {
     return {
       visits: null,
-      pageviews: null,
+      requests: null,
       referrer_summary: null,
     };
   }
 
   return {
     visits: totals.visits,
-    pageviews: totals.pageviews,
+    requests: totals.requests,
     referrer_summary: null,
   };
 }
 
-function latestTrafficWindow(row: TrafficRow | null): { day: string | null; visits: number | null; pageviews: number | null; referrer_summary: string | null } {
+function latestTrafficWindow(row: TrafficRow | null): { day: string | null; visits: number | null; requests: number | null; referrer_summary: string | null } {
   if (!row) {
     return {
       day: null,
       visits: null,
-      pageviews: null,
+      requests: null,
       referrer_summary: null,
     };
   }
@@ -208,12 +210,12 @@ function latestTrafficWindow(row: TrafficRow | null): { day: string | null; visi
   return {
     day: row.day,
     visits: row.visits,
-    pageviews: row.pageviews,
+    requests: row.requests,
     referrer_summary: row.referrer_summary,
   };
 }
 
-async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Promise<{ visits: number | null; pageviews: number }> {
+async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Promise<{ visits: number | null; requests: number }> {
   const response = await fetch(CLOUDFLARE_GRAPHQL_ENDPOINT, {
     method: "POST",
     headers: {
@@ -246,26 +248,26 @@ async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Prom
     throw new Error("cloudflare_graphql_empty_daily_result");
   }
 
-  const pageviews = row.sum?.pageViews;
-  if (typeof pageviews !== "number" || !Number.isFinite(pageviews)) {
-    throw new Error("cloudflare_graphql_missing_pageviews_metric");
+  const requests = row.count;
+  if (typeof requests !== "number" || !Number.isFinite(requests)) {
+    throw new Error("cloudflare_graphql_missing_count_metric");
   }
 
   return {
-    visits: null,
-    pageviews,
+    visits: typeof row.sum?.visits === "number" && Number.isFinite(row.sum.visits) ? row.sum.visits : null,
+    requests,
   };
 }
 
 async function upsertBuscoreTrafficDaily(
   db: D1Database,
-  snapshot: { day: string; visits: number | null; pageviews: number; referrer_summary: string | null; captured_at: string }
+  snapshot: { day: string; visits: number | null; requests: number; referrer_summary: string | null; captured_at: string }
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO buscore_traffic_daily(day, visits, pageviews, referrer_summary, captured_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET visits = excluded.visits, pageviews = excluded.pageviews, referrer_summary = excluded.referrer_summary, captured_at = excluded.captured_at"
+      "INSERT INTO buscore_traffic_daily(day, visits, requests, referrer_summary, captured_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET visits = excluded.visits, requests = excluded.requests, referrer_summary = excluded.referrer_summary, captured_at = excluded.captured_at"
     )
-    .bind(snapshot.day, snapshot.visits, snapshot.pageviews, snapshot.referrer_summary, snapshot.captured_at)
+    .bind(snapshot.day, snapshot.visits, snapshot.requests, snapshot.referrer_summary, snapshot.captured_at)
     .run();
 }
 
@@ -288,7 +290,7 @@ async function captureTrafficForDay(env: Env, day: string): Promise<void> {
   await upsertBuscoreTrafficDaily(env.DB, {
     day,
     visits: traffic.visits,
-    pageviews: traffic.pageviews,
+    requests: traffic.requests,
     referrer_summary: null,
     captured_at: new Date().toISOString(),
   });

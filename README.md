@@ -69,12 +69,12 @@ Notes:
     "latest_day": {
       "day": "2026-03-22",
       "visits": null,
-      "pageviews": 0,
+      "requests": 0,
       "referrer_summary": null
     },
     "last_7_days": {
       "visits": null,
-      "pageviews": 0,
+      "requests": 0,
       "referrer_summary": null
     }
   }
@@ -91,8 +91,8 @@ Contract note:
 - `traffic.latest_day` is the most recent completed UTC day snapshot stored in D1.
 - `traffic.last_7_days` aggregates stored traffic rows within the last seven UTC days.
 - If a traffic window has no stored data, its traffic fields return `null` instead of synthetic zeroes.
-- `pageviews` come from a direct daily Cloudflare page view metric.
-- `visits` are currently `null` because this implementation does not derive visits and the chosen single daily query path does not use a documented direct visits metric.
+- `requests` come from daily request `count` on Cloudflare `httpRequestsAdaptiveGroups`.
+- `visits` come from `sum.visits` on the same single-query path when provided, and remain nullable when absent.
 - `referrer_summary` is currently `null` because this change intentionally avoids adding referrer complexity or extra query paths.
 
 ## D1 Schema (Current)
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 CREATE TABLE IF NOT EXISTS buscore_traffic_daily (
   day              TEXT    PRIMARY KEY,
   visits           INTEGER NULL,
-  pageviews        INTEGER NOT NULL,
+  requests         INTEGER NOT NULL,
   referrer_summary TEXT    NULL,
   captured_at      TEXT    NOT NULL
 );
@@ -136,7 +136,7 @@ Traffic capture notes:
 - Successful captures upsert one final row per UTC day, so reruns converge to one row for that day.
 - If the Cloudflare pull fails or returns GraphQL errors, Lighthouse skips the row for that day rather than writing synthetic zeroes.
 - If the query returns no daily row for the selected day/hostname, Lighthouse treats the run as failed and skips the row.
-- Lighthouse validates that the response includes a numeric daily pageviews field; if missing/undefined/non-numeric, the run is treated as failed and the row is skipped.
+- Lighthouse validates that the response includes a numeric daily request `count` field; if missing/undefined/non-numeric, the run is treated as failed and the row is skipped.
 - Authenticated `/report` also performs one best-effort lazy backfill attempt for the previous completed UTC day only when that day is missing, using the same per-day capture logic.
 
 ## Setup

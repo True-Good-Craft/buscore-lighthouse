@@ -56,7 +56,7 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 - Capture is idempotent per day: reruns converge to one final row for that day.
 - If the Cloudflare pull fails or returns GraphQL errors, Lighthouse skips the row for that day.
 - If the query returns no daily row for the selected day and hostname, Lighthouse treats that run as failed and skips the row.
-- Lighthouse validates that the chosen query response includes a numeric daily pageviews metric; if missing/undefined/non-numeric, Lighthouse treats that run as failed and skips the row.
+- Lighthouse validates that the chosen query response includes a numeric daily request count metric (`count` on `httpRequestsAdaptiveGroups`); if missing/undefined/non-numeric, Lighthouse treats that run as failed and skips the row.
 - This scheduled traffic capture is additive and non-blocking. Lighthouse core request handling and core metric reporting remain operational if the Cloudflare pull path is unavailable.
 
 ### Manifest Service
@@ -123,12 +123,12 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 - `buscore_traffic_daily` schema:
   - `day TEXT PRIMARY KEY`
   - `visits INTEGER NULL`
-  - `pageviews INTEGER NOT NULL`
+  - `requests INTEGER NOT NULL`
   - `referrer_summary TEXT NULL`
   - `captured_at TEXT NOT NULL`
 - `buscore_traffic_daily` stores one row per completed UTC day only.
-- `pageviews` is sourced from a direct daily Cloudflare page view metric.
-- `visits` is nullable in current implementation because this selected single daily query path does not use a documented direct visits metric.
+- `requests` is sourced from daily request `count` on `httpRequestsAdaptiveGroups`.
+- `visits` is sourced from `sum.visits` on `httpRequestsAdaptiveGroups` when present, and remains nullable.
 - `referrer_summary` is nullable and currently stored as `NULL`.
 
 ## 5. Configuration
@@ -160,12 +160,12 @@ Not used by current code:
 - Current shipped response shape includes: `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, `traffic`.
 - Current shipped `trends` fields include: `downloads_change_percent`, `update_checks_change_percent`, `weekly_downloads_change_percent`, `weekly_update_checks_change_percent`, `conversion_ratio`.
 - `conversion_ratio` is defined as today downloads divided by today update checks (with safe zero-denominator handling).
-- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `pageviews`, `referrer_summary`.
-- `traffic.last_7_days` contains aggregate traffic fields `visits`, `pageviews`, `referrer_summary` across stored rows in the last seven UTC days.
+- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `referrer_summary`.
+- `traffic.last_7_days` contains aggregate traffic fields `visits`, `requests`, `referrer_summary` across stored rows in the last seven UTC days.
 - Existing non-traffic `/report` fields remain intact and semantically unchanged.
 - If a requested traffic window has no stored traffic rows, its traffic fields return `NULL` rather than synthetic zeroes.
-- `traffic.pageviews` comes from a direct daily page view metric from the Cloudflare GraphQL Analytics API.
-- `traffic.visits` is `NULL` in the current implementation because this approved single daily query path does not use a documented direct visits metric.
+- `traffic.requests` comes from daily request `count` on `httpRequestsAdaptiveGroups` in the Cloudflare GraphQL Analytics API.
+- `traffic.visits` is populated from `sum.visits` when provided by the same single-query path and remains nullable when absent.
 - `traffic.referrer_summary` is `NULL` in the current implementation.
 - Changes to `/report` response fields or semantics require explicit SOT update and changelog entry in the same change set.
 

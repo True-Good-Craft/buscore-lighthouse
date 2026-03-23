@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0] - 2026-03-23
+
+### Changed
+- Correct Buscore traffic metric semantics for the Cloudflare `httpRequestsAdaptiveGroups` capture path: Lighthouse now stores and reports daily `requests` (from `count`) instead of `pageviews`.
+- `GET /report` traffic fields are renamed from `pageviews` to `requests` in both `traffic.latest_day` and `traffic.last_7_days`.
+- The shared daily capture helper now validates numeric request `count` and no longer depends on unsupported `pageViews` on `httpRequestsAdaptiveGroups`.
+
+### Added
+- Add D1 migration `0004_rename_buscore_traffic_pageviews_to_requests.sql` to rename `buscore_traffic_daily.pageviews` to `requests`.
+
+### Fixed
+- Resolve live capture failure `cloudflare_graphql_payload_unknown field "pageViews"` by aligning metric selection with valid fields on the selected query node.
+
 ## [1.4.3] - 2026-03-23
 
 ### Added
