@@ -160,10 +160,11 @@ Not used by current code:
 - Current shipped response shape includes: `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, `traffic`.
 - Current shipped `trends` fields include: `downloads_change_percent`, `update_checks_change_percent`, `weekly_downloads_change_percent`, `weekly_update_checks_change_percent`, `conversion_ratio`.
 - `conversion_ratio` is defined as today downloads divided by today update checks (with safe zero-denominator handling).
-- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `referrer_summary`.
-- `traffic.last_7_days` contains aggregate traffic fields `visits`, `requests`, `referrer_summary` across stored rows in the last seven UTC days.
+- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `captured_at`, `referrer_summary`.
+- `traffic.last_7_days` contains aggregate traffic fields `visits`, `requests`, `avg_daily_visits`, `avg_daily_requests`, and `days_with_data` across stored rows in the last seven UTC days.
 - Existing non-traffic `/report` fields remain intact and semantically unchanged.
 - If a requested traffic window has no stored traffic rows, its traffic fields return `NULL` rather than synthetic zeroes.
+- `avg_daily_visits` and `avg_daily_requests` are computed using `days_with_data` (stored rows in the 7-day window) as the divisor; Lighthouse does not divide by seven unless seven rows exist.
 - `traffic.requests` comes from daily request `count` on `httpRequestsAdaptiveGroups` in the Cloudflare GraphQL Analytics API.
 - `traffic.visits` is populated from `sum.visits` when provided by the same single-query path and remains nullable when absent.
 - `traffic.referrer_summary` is `NULL` in the current implementation.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1] - 2026-03-23
+
+### Changed
+- Improve `GET /report` traffic usability without expanding telemetry scope: `traffic.latest_day` now includes stored `captured_at`.
+- Improve 7-day traffic summary shape to include `visits`, `requests`, `avg_daily_visits`, `avg_daily_requests`, and `days_with_data`.
+- Daily averages are now explicitly row-based (`days_with_data` divisor), so Lighthouse does not divide by seven unless seven traffic rows exist.
+
 ## [1.5.0] - 2026-03-23
 
 ### Changed

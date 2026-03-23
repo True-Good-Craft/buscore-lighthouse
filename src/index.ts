@@ -9,7 +9,7 @@ export interface Env {
 
 type CounterColumn = "update_checks" | "downloads" | "errors";
 type TrafficTotals = { row_count: number; visits: number | null; requests: number | null };
-type TrafficRow = { day: string; visits: number | null; requests: number; referrer_summary: string | null };
+type TrafficRow = { day: string; visits: number | null; requests: number; referrer_summary: string | null; captured_at: string };
 type CloudflareGraphQLResponse = {
   data?: {
     viewer?: {
@@ -174,35 +174,56 @@ async function queryTrafficTotalsInRange(db: D1Database, startDay: string, endDa
 async function queryLatestTrafficRow(db: D1Database): Promise<TrafficRow | null> {
   const row = await db
     .prepare(
-      "SELECT day, visits, requests, referrer_summary FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
+      "SELECT day, visits, requests, referrer_summary, captured_at FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
     )
     .first<TrafficRow>();
 
   return row ?? null;
 }
 
-function trafficWindowFromTotals(totals: TrafficTotals): { visits: number | null; requests: number | null; referrer_summary: string | null } {
+function trafficWindowFromTotals(totals: TrafficTotals): {
+  visits: number | null;
+  requests: number | null;
+  avg_daily_visits: number | null;
+  avg_daily_requests: number | null;
+  days_with_data: number;
+} {
   if (totals.row_count === 0) {
     return {
       visits: null,
       requests: null,
-      referrer_summary: null,
+      avg_daily_visits: null,
+      avg_daily_requests: null,
+      days_with_data: 0,
     };
   }
+
+  const daysWithData = totals.row_count;
+  const avgDailyVisits = totals.visits === null ? null : totals.visits / daysWithData;
+  const avgDailyRequests = totals.requests === null ? null : totals.requests / daysWithData;
 
   return {
     visits: totals.visits,
     requests: totals.requests,
-    referrer_summary: null,
+    avg_daily_visits: avgDailyVisits,
+    avg_daily_requests: avgDailyRequests,
+    days_with_data: daysWithData,
   };
 }
 
-function latestTrafficWindow(row: TrafficRow | null): { day: string | null; visits: number | null; requests: number | null; referrer_summary: string | null } {
+function latestTrafficWindow(row: TrafficRow | null): {
+  day: string | null;
+  visits: number | null;
+  requests: number | null;
+  captured_at: string | null;
+  referrer_summary: string | null;
+} {
   if (!row) {
     return {
       day: null,
       visits: null,
       requests: null,
+      captured_at: null,
       referrer_summary: null,
     };
   }
@@ -211,6 +232,7 @@ function latestTrafficWindow(row: TrafficRow | null): { day: string | null; visi
     day: row.day,
     visits: row.visits,
     requests: row.requests,
+    captured_at: row.captured_at,
     referrer_summary: row.referrer_summary,
   };
 }

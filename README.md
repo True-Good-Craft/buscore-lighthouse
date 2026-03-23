@@ -70,12 +70,15 @@ Notes:
       "day": "2026-03-22",
       "visits": null,
       "requests": 0,
+      "captured_at": "2026-03-23T00:05:02.123Z",
       "referrer_summary": null
     },
     "last_7_days": {
       "visits": null,
       "requests": 0,
-      "referrer_summary": null
+      "avg_daily_visits": null,
+      "avg_daily_requests": 0,
+      "days_with_data": 1
     }
   }
 }
@@ -88,9 +91,10 @@ Contract note:
 - On each authenticated `/report` request, Lighthouse checks whether the previous completed UTC day exists in `buscore_traffic_daily`; if missing, it attempts one best-effort backfill for that exact day before assembling the report.
 - This lazy backfill reuses the same traffic capture logic as the scheduled path and does not replace cron-based capture.
 - If lazy backfill fails, `/report` still returns successfully with traffic fields based only on currently stored data.
-- `traffic.latest_day` is the most recent completed UTC day snapshot stored in D1.
-- `traffic.last_7_days` aggregates stored traffic rows within the last seven UTC days.
+- `traffic.latest_day` is the most recent completed UTC day snapshot stored in D1 and includes `captured_at`.
+- `traffic.last_7_days` aggregates stored traffic rows within the last seven UTC days and includes `days_with_data`, `avg_daily_visits`, and `avg_daily_requests`.
 - If a traffic window has no stored data, its traffic fields return `null` instead of synthetic zeroes.
+- Average daily traffic values divide by `days_with_data` (rows that exist), not blindly by 7.
 - `requests` come from daily request `count` on Cloudflare `httpRequestsAdaptiveGroups`.
 - `visits` come from `sum.visits` on the same single-query path when provided, and remain nullable when absent.
 - `referrer_summary` is currently `null` because this change intentionally avoids adding referrer complexity or extra query paths.
