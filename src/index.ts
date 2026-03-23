@@ -40,7 +40,6 @@ const BUSCORE_TRAFFIC_QUERY = `query DailyBuscoreTraffic($zoneTag: string, $day:
           date_geq: $day
           date_leq: $day
           clientRequestHTTPHost: $host
-          requestSource: "eyeball"
         }
       ) {
         sum {
