@@ -70,8 +70,7 @@ Notes:
       "day": "2026-03-22",
       "visits": null,
       "requests": 0,
-      "captured_at": "2026-03-23T00:05:02.123Z",
-      "referrer_summary": null
+      "captured_at": "2026-03-23T00:05:02.123Z"
     },
     "last_7_days": {
       "visits": null,
@@ -97,7 +96,6 @@ Contract note:
 - Average daily traffic values divide by `days_with_data` (rows that exist), not blindly by 7.
 - `requests` come from daily request `count` on Cloudflare `httpRequestsAdaptiveGroups`.
 - `visits` come from `sum.visits` on the same single-query path when provided, and remain nullable when absent.
-- `referrer_summary` is currently `null` because this change intentionally avoids adding referrer complexity or extra query paths.
 
 ## D1 Schema (Current)
 
@@ -110,11 +108,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 );
 
 CREATE TABLE IF NOT EXISTS buscore_traffic_daily (
-  day              TEXT    PRIMARY KEY,
-  visits           INTEGER NULL,
-  requests         INTEGER NOT NULL,
-  referrer_summary TEXT    NULL,
-  captured_at      TEXT    NOT NULL
+  day         TEXT    PRIMARY KEY,
+  visits      INTEGER NULL,
+  requests    INTEGER NOT NULL,
+  captured_at TEXT    NOT NULL
 );
 ```
 

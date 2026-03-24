@@ -9,7 +9,7 @@ export interface Env {
 
 type CounterColumn = "update_checks" | "downloads" | "errors";
 type TrafficTotals = { row_count: number; visits: number | null; requests: number | null };
-type TrafficRow = { day: string; visits: number | null; requests: number; referrer_summary: string | null; captured_at: string };
+type TrafficRow = { day: string; visits: number | null; requests: number; captured_at: string };
 type CloudflareGraphQLResponse = {
   data?: {
     viewer?: {
@@ -18,22 +18,6 @@ type CloudflareGraphQLResponse = {
           count?: number | null;
           sum?: {
             visits?: number | null;
-          };
-        }>;
-      }>;
-    };
-  };
-  errors?: Array<{ message?: string }> | null;
-};
-
-type CloudflareReferrersGraphQLResponse = {
-  data?: {
-    viewer?: {
-      zones?: Array<{
-        referrerData?: Array<{
-          count?: number | null;
-          dimensions?: {
-            clientRefererHost?: string | null;
           };
         }>;
       }>;
@@ -63,28 +47,6 @@ const BUSCORE_TRAFFIC_QUERY = `query DailyBuscoreTraffic($zoneTag: string, $star
         count
         sum {
           visits
-        }
-      }
-    }
-  }
-}`;
-
-const BUSCORE_REFERRERS_QUERY = `query DailyBuscoreReferrers($zoneTag: string, $start: Time!, $end: Time!, $host: string!) {
-  viewer {
-    zones(filter: { zoneTag: $zoneTag }) {
-      referrerData: httpRequestsAdaptiveGroups(
-        limit: 10
-        orderBy: [count_DESC]
-        filter: {
-          datetime_geq: $start
-          datetime_lt: $end
-          clientRequestHTTPHost: $host
-          requestSource: "eyeball"
-        }
-      ) {
-        count
-        dimensions {
-          clientRefererHost
         }
       }
     }
@@ -212,7 +174,7 @@ async function queryTrafficTotalsInRange(db: D1Database, startDay: string, endDa
 async function queryLatestTrafficRow(db: D1Database): Promise<TrafficRow | null> {
   const row = await db
     .prepare(
-      "SELECT day, visits, requests, referrer_summary, captured_at FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
+      "SELECT day, visits, requests, captured_at FROM buscore_traffic_daily ORDER BY day DESC LIMIT 1"
     )
     .first<TrafficRow>();
 
@@ -254,7 +216,6 @@ function latestTrafficWindow(row: TrafficRow | null): {
   visits: number | null;
   requests: number | null;
   captured_at: string | null;
-  referrer_summary: string | null;
 } {
   if (!row) {
     return {
@@ -262,7 +223,6 @@ function latestTrafficWindow(row: TrafficRow | null): {
       visits: null,
       requests: null,
       captured_at: null,
-      referrer_summary: null,
     };
   }
 
@@ -271,7 +231,6 @@ function latestTrafficWindow(row: TrafficRow | null): {
     visits: row.visits,
     requests: row.requests,
     captured_at: row.captured_at,
-    referrer_summary: row.referrer_summary,
   };
 }
 
@@ -319,144 +278,15 @@ async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Prom
   };
 }
 
-async function fetchTopReferrersForDay(env: Env, day: string): Promise<Array<{ referrer: string; count: number }>> {
-  console.log(`[Referrer Capture] Starting query for day ${day}`);
-  const response = await fetch(CLOUDFLARE_GRAPHQL_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.CF_API_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query: BUSCORE_REFERRERS_QUERY,
-      variables: {
-        zoneTag: env.CF_ZONE_TAG,
-        start: `${day}T00:00:00Z`,
-        end: `${utcDay(addUtcDays(new Date(`${day}T00:00:00Z`), 1))}T00:00:00Z`,
-        host: BUSCORE_HOST,
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    const errorMsg = `HTTP ${response.status}`;
-    console.error(`[Referrer Capture] Query failed: ${errorMsg}`);
-    throw new Error(`cloudflare_referrers_graphql_http_${response.status}`);
-  }
-
-  const payload = (await response.json()) as CloudflareReferrersGraphQLResponse;
-  if (payload.errors && payload.errors.length > 0) {
-    const message = payload.errors.map((error) => error.message || "graphql_error").join("; ");
-    console.error(`[Referrer Capture] GraphQL error(s): ${message}`);
-    throw new Error(`cloudflare_referrers_graphql_payload_${message}`);
-  }
-
-  const rows = payload.data?.viewer?.zones?.[0]?.referrerData;
-  if (!rows || rows.length === 0) {
-    console.warn(
-      `[Referrer Capture] Query returned no rows. Payload structure: data=${!!payload.data}, viewer=${!!payload.data?.viewer}, zones=${!!payload.data?.viewer?.zones}, referrerData=${rows ? "exists but empty" : "missing"}`
-    );
-    throw new Error("cloudflare_referrers_graphql_empty_result");
-  }
-
-  console.log(`[Referrer Capture] Query succeeded; ${rows.length} raw referrer row(s) returned from Cloudflare`);
-
-  const referrers: Array<{ referrer: string; count: number }> = [];
-  let skippedCount = 0;
-  for (const row of rows) {
-    const referer = row.dimensions?.clientRefererHost ?? null;
-    const count = row.count ?? null;
-
-    if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
-      skippedCount++;
-      continue;
-    }
-
-    const normalizedReferer = normalizeReferrer(referer);
-    referrers.push({ referrer: normalizedReferer, count });
-  }
-
-  if (skippedCount > 0) {
-    console.log(`[Referrer Capture] Skipped ${skippedCount} row(s) with invalid/missing count metric`);
-  }
-
-  if (referrers.length === 0) {
-    console.error(
-      `[Referrer Capture] No valid entries after filtering. All ${rows.length} rows either had invalid count or normalized to nothing.`
-    );
-    throw new Error("cloudflare_referrers_no_valid_entries");
-  }
-
-  console.log(`[Referrer Capture] Normalized to ${referrers.length} unique referrer(s) after aggregation`);
-  return referrers;
-}
-
-function normalizeReferrer(referer: string | null | undefined): string {
-  if (!referer || !referer.trim()) {
-    return "direct_or_unknown";
-  }
-
-  const normalized = referer.trim().toLowerCase();
-
-  if (normalized === "" || normalized === "-" || normalized === "(direct)" || normalized === "direct") {
-    return "direct_or_unknown";
-  }
-
-  try {
-    const url = new URL(normalized.startsWith("http") ? normalized : `https://${normalized}`);
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === "buscore.ca" || hostname === "www.buscore.ca") {
-      return "self_hosted";
-    }
-    return hostname;
-  } catch {
-    return "direct_or_unknown";
-  }
-}
-
-function buildReferrerSummary(referrers: Array<{ referrer: string; count: number }>): string {
-  const summary: Record<string, number> = {};
-  for (const item of referrers) {
-    if (summary[item.referrer] !== undefined) {
-      summary[item.referrer] += item.count;
-    } else {
-      summary[item.referrer] = item.count;
-    }
-  }
-
-  const sorted = Object.entries(summary)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
-
-  const result = JSON.stringify(Object.fromEntries(sorted));
-  console.log(`[Referrer Capture] Summary built: ${result}`);
-  return result;
-}
-
-async function fetchReferrerSummaryForDay(env: Env, day: string): Promise<string | null> {
-  try {
-    const referrers = await fetchTopReferrersForDay(env, day);
-    const summary = buildReferrerSummary(referrers);
-    console.log(`[Referrer Capture] Capture succeeded for day ${day}; referrer_summary will be populated.`);
-    return summary;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[Referrer Capture] Referrer capture failed for day ${day}; traffic totals will still be captured with referrer_summary=null. Error: ${errorMsg}`
-    );
-    return null;
-  }
-}
-
 async function upsertBuscoreTrafficDaily(
   db: D1Database,
-  snapshot: { day: string; visits: number | null; requests: number; referrer_summary: string | null; captured_at: string }
+  snapshot: { day: string; visits: number | null; requests: number; captured_at: string }
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO buscore_traffic_daily(day, visits, requests, referrer_summary, captured_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET visits = excluded.visits, requests = excluded.requests, referrer_summary = excluded.referrer_summary, captured_at = excluded.captured_at"
+      "INSERT INTO buscore_traffic_daily(day, visits, requests, captured_at) VALUES (?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET visits = excluded.visits, requests = excluded.requests, captured_at = excluded.captured_at"
     )
-    .bind(snapshot.day, snapshot.visits, snapshot.requests, snapshot.referrer_summary, snapshot.captured_at)
+    .bind(snapshot.day, snapshot.visits, snapshot.requests, snapshot.captured_at)
     .run();
 }
 
@@ -469,23 +299,11 @@ async function captureTrafficForDay(env: Env, day: string): Promise<void> {
   console.log(`[Traffic Totals] Fetching traffic totals for day ${day}`);
   const traffic = await fetchPreviousCompletedBuscoreTraffic(env, day);
   console.log(`[Traffic Totals] Retrieved: visits=${traffic.visits}, requests=${traffic.requests}`);
-
-  let referrerSummary: string | null = null;
-  console.log(`[Referrer Capture] Starting referrer capture for day ${day}`);
-  try {
-    referrerSummary = await fetchReferrerSummaryForDay(env, day);
-  } catch (error) {
-    console.warn("Referrer summary fetch failed; storing traffic totals with null referrer_summary.", error);
-  }
-
-  console.log(
-    `[Traffic Totals] Upserting row for day ${day}: visits=${traffic.visits}, requests=${traffic.requests}, referrer_summary=${referrerSummary ? "populated" : "null"}`
-  );
+  console.log(`[Traffic Totals] Upserting row for day ${day}: visits=${traffic.visits}, requests=${traffic.requests}`);
   await upsertBuscoreTrafficDaily(env.DB, {
     day,
     visits: traffic.visits,
     requests: traffic.requests,
-    referrer_summary: referrerSummary,
     captured_at: new Date().toISOString(),
   });
   console.log(`[Traffic Totals] Upsert complete for day ${day}`);

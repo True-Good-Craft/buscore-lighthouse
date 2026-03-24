@@ -46,7 +46,7 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 ### Daily Buscore Traffic Capture
 
 - Runs once per day on a Worker cron.
-- Uses Cloudflare GraphQL Analytics API queries per scheduled run (one for traffic totals, and one for referrers if capture is enabled).
+- Uses one Cloudflare GraphQL Analytics API query per scheduled run for traffic totals.
 - Always queries the previous completed UTC day.
 - Never queries the current UTC day.
 - Never persists rolling-window traffic snapshots.
@@ -55,14 +55,6 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 - **Traffic Totals Query:**
   - Queries daily request `count` and visitor `sum.visits` on `httpRequestsAdaptiveGroups`.
   - Lighthouse validates that the response includes a numeric daily request count metric (`count`); if missing/undefined/non-numeric, the entire capture for that day fails and skips the row.
-- **Referrer Query (additive, non-blocking):**
-  - After fetching traffic totals, Lighthouse attempts to fetch top referrers for the same day grouped by `httpReferer` dimension.
-  - Limits referrer results to top 10 by request count.
-  - Normalizes referrer values: empty/null/direct-like values (including self-hosted `buscore.ca` and `www.buscore.ca`) are normalized to a stable label.
-  - Builds a compact JSON summary string aggregating normalized referrers and their request counts, limited to top 10 after normalization.
-  - Stores the JSON summary in `referrer_summary` column.
-  - If referrer capture fails at any point, Lighthouse logs a warning and continues with traffic totals, storing `NULL` in `referrer_summary`.
-  - Referrer failure does not block traffic totals capture.
 - On successful pull, upserts one final row into `buscore_traffic_daily` for the selected UTC day.
 - Capture is idempotent per day: reruns converge to one final row for that day.
 - If the traffic totals Cloudflare pull fails or returns GraphQL errors, Lighthouse skips the row for that day entirely.
@@ -125,12 +117,10 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - `day TEXT PRIMARY KEY`
   - `visits INTEGER NULL`
   - `requests INTEGER NOT NULL`
-  - `referrer_summary TEXT NULL`
   - `captured_at TEXT NOT NULL`
 - `buscore_traffic_daily` stores one row per completed UTC day only.
 - `requests` is sourced from daily request `count` on `httpRequestsAdaptiveGroups`.
 - `visits` is sourced from `sum.visits` on `httpRequestsAdaptiveGroups` when present, and remains nullable.
-- `referrer_summary` is a nullable JSON string that is populated when referrer capture succeeds. It contains a compact JSON object mapping normalized referrer names to their request counts (e.g., `{"example.com":150,"direct_or_unknown":100}`), limited to top 10 referrers. When referrer capture fails or is skipped, `referrer_summary` is stored as `NULL`.
 
 ## 5. Configuration
 
@@ -161,8 +151,7 @@ Not used by current code:
 - Current shipped response shape includes: `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, `traffic`.
 - Current shipped `trends` fields include: `downloads_change_percent`, `update_checks_change_percent`, `weekly_downloads_change_percent`, `weekly_update_checks_change_percent`, `conversion_ratio`.
 - `conversion_ratio` is defined as today downloads divided by today update checks (with safe zero-denominator handling).
-- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `captured_at`, `referrer_summary`.
-- `traffic.referrer_summary` is a nullable JSON string or `NULL`. When populated, it contains compact JSON mapping normalized referrer hostnames to request counts (top 10). Referrer names are normalized: empty/null/direct-like values and self-hosted domains are normalized to `"direct_or_unknown"` or `"self_hosted"` respectively. When referrer capture fails during the daily traffic capture, `referrer_summary` remains `NULL` but traffic totals (`requests`, `visits`, `captured_at`) are still recorded normally.
+- `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `captured_at`.
 - `traffic.last_7_days` contains aggregate traffic fields `visits`, `requests`, `avg_daily_visits`, `avg_daily_requests`, and `days_with_data` across stored rows in the last seven UTC days.
 - Existing non-traffic `/report` fields remain intact and semantically unchanged.
 - If a requested traffic window has no stored traffic rows, its traffic fields return `NULL` rather than synthetic zeroes.
