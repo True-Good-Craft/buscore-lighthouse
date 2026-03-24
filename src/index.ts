@@ -26,6 +26,20 @@ type CloudflareGraphQLResponse = {
   errors?: Array<{ message?: string }> | null;
 };
 
+type CloudflareReferrersGraphQLResponse = {
+  data?: {
+    viewer?: {
+      zones?: Array<{
+        referrerData?: Array<{
+          httpReferer?: string | null;
+          count?: number | null;
+        }>;
+      }>;
+    };
+  };
+  errors?: Array<{ message?: string }> | null;
+};
+
 const MANIFEST_PATH = "/manifest/core/stable.json";
 const MANIFEST_KEY = "manifest/core/stable.json";
 const RELEASE_PATH = /^\/releases\/([^/]+)$/;
@@ -48,6 +62,27 @@ const BUSCORE_TRAFFIC_QUERY = `query DailyBuscoreTraffic($zoneTag: string, $star
         sum {
           visits
         }
+      }
+    }
+  }
+}`;
+
+const BUSCORE_REFERRERS_QUERY = `query DailyBuscoreReferrers($zoneTag: string, $start: Time!, $end: Time!, $host: string!) {
+  viewer {
+    zones(filter: { zoneTag: $zoneTag }) {
+      referrerData: httpRequestsAdaptiveGroups(
+        limit: 10
+        orderBy: [count_DESC]
+        filter: {
+          datetime_geq: $start
+          datetime_lt: $end
+          clientRequestHTTPHost: $host
+          requestSource: "eyeball"
+        }
+        groupBy: [httpReferer]
+      ) {
+        httpReferer
+        count
       }
     }
   }
@@ -281,6 +316,110 @@ async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Prom
   };
 }
 
+async function fetchTopReferrersForDay(env: Env, day: string): Promise<Array<{ referrer: string; count: number }>> {
+  const response = await fetch(CLOUDFLARE_GRAPHQL_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.CF_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: BUSCORE_REFERRERS_QUERY,
+      variables: {
+        zoneTag: env.CF_ZONE_TAG,
+        start: `${day}T00:00:00Z`,
+        end: `${utcDay(addUtcDays(new Date(`${day}T00:00:00Z`), 1))}T00:00:00Z`,
+        host: BUSCORE_HOST,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`cloudflare_referrers_graphql_http_${response.status}`);
+  }
+
+  const payload = (await response.json()) as CloudflareReferrersGraphQLResponse;
+  if (payload.errors && payload.errors.length > 0) {
+    const message = payload.errors.map((error) => error.message || "graphql_error").join("; ");
+    throw new Error(`cloudflare_referrers_graphql_payload_${message}`);
+  }
+
+  const rows = payload.data?.viewer?.zones?.[0]?.referrerData;
+  if (!rows || rows.length === 0) {
+    throw new Error("cloudflare_referrers_graphql_empty_result");
+  }
+
+  const referrers: Array<{ referrer: string; count: number }> = [];
+  for (const row of rows) {
+    const referer = row.httpReferer ?? null;
+    const count = row.count ?? null;
+
+    if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+
+    const normalizedReferer = normalizeReferrer(referer);
+    referrers.push({ referrer: normalizedReferer, count });
+  }
+
+  if (referrers.length === 0) {
+    throw new Error("cloudflare_referrers_no_valid_entries");
+  }
+
+  return referrers;
+}
+
+function normalizeReferrer(referer: string | null | undefined): string {
+  if (!referer || !referer.trim()) {
+    return "direct_or_unknown";
+  }
+
+  const normalized = referer.trim().toLowerCase();
+
+  if (normalized === "" || normalized === "-" || normalized === "(direct)" || normalized === "direct") {
+    return "direct_or_unknown";
+  }
+
+  try {
+    const url = new URL(normalized.startsWith("http") ? normalized : `https://${normalized}`);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "buscore.ca" || hostname === "www.buscore.ca") {
+      return "self_hosted";
+    }
+    return hostname;
+  } catch {
+    return "direct_or_unknown";
+  }
+}
+
+function buildReferrerSummary(referrers: Array<{ referrer: string; count: number }>): string {
+  const summary: Record<string, number> = {};
+  for (const item of referrers) {
+    if (summary[item.referrer] !== undefined) {
+      summary[item.referrer] += item.count;
+    } else {
+      summary[item.referrer] = item.count;
+    }
+  }
+
+  const sorted = Object.entries(summary)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  return JSON.stringify(Object.fromEntries(sorted));
+}
+
+async function fetchReferrerSummaryForDay(env: Env, day: string): Promise<string | null> {
+  try {
+    const referrers = await fetchTopReferrersForDay(env, day);
+    const summary = buildReferrerSummary(referrers);
+    return summary;
+  } catch (error) {
+    console.warn("Buscore traffic referrer capture failed; continuing with null referrer_summary.", error);
+    return null;
+  }
+}
+
 async function upsertBuscoreTrafficDaily(
   db: D1Database,
   snapshot: { day: string; visits: number | null; requests: number; referrer_summary: string | null; captured_at: string }
@@ -300,11 +439,19 @@ async function captureTrafficForDay(env: Env, day: string): Promise<void> {
   }
 
   const traffic = await fetchPreviousCompletedBuscoreTraffic(env, day);
+
+  let referrerSummary: string | null = null;
+  try {
+    referrerSummary = await fetchReferrerSummaryForDay(env, day);
+  } catch (error) {
+    console.warn("Referrer summary fetch failed; storing traffic totals with null referrer_summary.", error);
+  }
+
   await upsertBuscoreTrafficDaily(env.DB, {
     day,
     visits: traffic.visits,
     requests: traffic.requests,
-    referrer_summary: null,
+    referrer_summary: referrerSummary,
     captured_at: new Date().toISOString(),
   });
 }

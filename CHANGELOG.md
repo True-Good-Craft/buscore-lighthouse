@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0] - 2026-03-24
+
+### Added
+- Add additive daily Buscore traffic referrer capture via separate Cloudflare GraphQL query to `httpRequestsAdaptiveGroups` grouped by `httpReferer` dimension.
+- Populate `referrer_summary` field in `buscore_traffic_daily` with compact JSON mapping normalized referrer hostnames to request counts (top 10 aggregated).
+- Normalize referrer values: empty, null, direct-like values, and self-hosted domains are collapsed into stable labels (`direct_or_unknown`, `self_hosted`) for privacy and consistency.
+- Referrer capture is fully non-blocking: if referrer query fails at any point, traffic totals capture (`requests`, `visits`, `captured_at`) still succeeds and stores `NULL` in `referrer_summary`.
+- Both scheduled daily capture and `/report` refresh capture now attempt to populate `referrer_summary` following the same additive failure-tolerant logic.
+
+### Changed
+- Improve robustness of daily traffic capture: traffic totals and referrer data are now queried separately to reduce blast radius if one query shape fails.
+
 ## [1.5.3] - 2026-03-23
 
 ### Changed
