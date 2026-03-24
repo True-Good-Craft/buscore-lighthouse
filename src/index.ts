@@ -320,6 +320,7 @@ async function fetchPreviousCompletedBuscoreTraffic(env: Env, day: string): Prom
 }
 
 async function fetchTopReferrersForDay(env: Env, day: string): Promise<Array<{ referrer: string; count: number }>> {
+  console.log(`[Referrer Capture] Starting query for day ${day}`);
   const response = await fetch(CLOUDFLARE_GRAPHQL_ENDPOINT, {
     method: "POST",
     headers: {
@@ -351,6 +352,8 @@ async function fetchTopReferrersForDay(env: Env, day: string): Promise<Array<{ r
   if (!rows || rows.length === 0) {
     throw new Error("cloudflare_referrers_graphql_empty_result");
   }
+
+  console.log(`[Referrer Capture] Query succeeded; ${rows.length} raw referrer row(s) returned from Cloudflare`);
 
   const referrers: Array<{ referrer: string; count: number }> = [];
   for (const row of rows) {
@@ -409,16 +412,22 @@ function buildReferrerSummary(referrers: Array<{ referrer: string; count: number
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
 
-  return JSON.stringify(Object.fromEntries(sorted));
+  const result = JSON.stringify(Object.fromEntries(sorted));
+  console.log(`[Referrer Capture] Summary built: ${result}`);
+  return result;
 }
 
 async function fetchReferrerSummaryForDay(env: Env, day: string): Promise<string | null> {
   try {
     const referrers = await fetchTopReferrersForDay(env, day);
     const summary = buildReferrerSummary(referrers);
+    console.log(`[Referrer Capture] Capture succeeded for day ${day}; referrer_summary will be populated.`);
     return summary;
   } catch (error) {
-    console.warn("Buscore traffic referrer capture failed; continuing with null referrer_summary.", error);
+    console.warn(
+      `[Referrer Capture] Referrer query failed for day ${day}; traffic totals will still be captured with referrer_summary=null.`,
+      error
+    );
     return null;
   }
 }
@@ -441,15 +450,21 @@ async function captureTrafficForDay(env: Env, day: string): Promise<void> {
     return;
   }
 
+  console.log(`[Traffic Totals] Fetching traffic totals for day ${day}`);
   const traffic = await fetchPreviousCompletedBuscoreTraffic(env, day);
+  console.log(`[Traffic Totals] Retrieved: visits=${traffic.visits}, requests=${traffic.requests}`);
 
   let referrerSummary: string | null = null;
+  console.log(`[Referrer Capture] Starting referrer capture for day ${day}`);
   try {
     referrerSummary = await fetchReferrerSummaryForDay(env, day);
   } catch (error) {
     console.warn("Referrer summary fetch failed; storing traffic totals with null referrer_summary.", error);
   }
 
+  console.log(
+    `[Traffic Totals] Upserting row for day ${day}: visits=${traffic.visits}, requests=${traffic.requests}, referrer_summary=${referrerSummary ? "populated" : "null"}`
+  );
   await upsertBuscoreTrafficDaily(env.DB, {
     day,
     visits: traffic.visits,
@@ -457,6 +472,7 @@ async function captureTrafficForDay(env: Env, day: string): Promise<void> {
     referrer_summary: referrerSummary,
     captured_at: new Date().toISOString(),
   });
+  console.log(`[Traffic Totals] Upsert complete for day ${day}`);
 }
 
 async function capturePreviousCompletedBuscoreTraffic(env: Env): Promise<void> {
