@@ -751,6 +751,7 @@ function withCors(request: Request, response: Response, allowMethods: string = "
     const origin = request.headers.get("Origin");
     if (origin && PAGEVIEW_ALLOWED_ORIGINS.has(origin)) {
       headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Access-Control-Allow-Credentials", "true");
       headers.set("Access-Control-Allow-Headers", "Content-Type");
       headers.set("Vary", "Origin");
     } else {

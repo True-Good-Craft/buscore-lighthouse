@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.8.2] - 2026-03-25
+
+### Fixed
+- Add `Access-Control-Allow-Credentials: true` to `POST /metrics/pageview` and its `OPTIONS` preflight for allowed first-party origins (`https://buscore.ca` and `https://www.buscore.ca`), enabling credentialed cross-origin requests from BUS Core.
+
 ## [1.8.1] - 2026-03-25
 
 ### Fixed

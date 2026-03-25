@@ -99,7 +99,7 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - Accepts JSON request bodies from the already-deployed BUS Core site emitter contract.
   - Always returns `204 No Content` with no response body.
   - CORS is explicitly limited to first-party BUS Core origins `https://buscore.ca` and `https://www.buscore.ca`; Lighthouse does not use wildcard `Access-Control-Allow-Origin` on this route.
-  - When the request `Origin` matches one of those two origins, Lighthouse returns `Access-Control-Allow-Origin` echoing that origin, `Access-Control-Allow-Methods: POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`, and `Vary: Origin`.
+  - When the request `Origin` matches one of those two origins, Lighthouse returns `Access-Control-Allow-Origin` echoing that origin, `Access-Control-Allow-Credentials: true`, `Access-Control-Allow-Methods: POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`, and `Vary: Origin`.
   - Requests from other origins still receive the normal `204` response semantics, but Lighthouse does not grant broad cross-origin browser access for this route.
   - Never emits client-visible error detail for malformed, partial, or rate-limited submissions.
   - Uses `ctx.waitUntil(...)` so response completion stays fast for beacon and keepalive callers.
