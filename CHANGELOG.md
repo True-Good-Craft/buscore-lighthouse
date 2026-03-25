@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.3] - 2026-03-25
+
+### Fixed
+- Align `POST /metrics/pageview` parser and validator with the canonical BUS Core site emitter contract by validating required fields (`type`, `client_ts`, `path`, `url`, `referrer`, `utm`, `device`, `viewport`, `lang`, `tz`) while allowing omitted optional fields (`src`, `utm.*`).
+- Preserve canonical empty-string values for `referrer`, `lang`, and `tz` instead of collapsing them to `null`, so accepted raw rows keep populated contract fields.
+- Keep invalid classification narrow for ingestion (`unreadable body`, `empty body`, `invalid JSON`, or contract-invalid required field types/shape) while preserving fire-and-forget `204` responses.
+
 ## [1.8.2] - 2026-03-25
 
 ### Fixed

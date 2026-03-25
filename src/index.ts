@@ -73,12 +73,14 @@ const RELEASE_FILENAME = /^TGC-BUS-Core-[0-9]+\.[0-9]+\.[0-9]+\.zip$/;
 const CLOUDFLARE_GRAPHQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 const BUSCORE_HOST = "buscore.ca";
 const PAGEVIEW_ALLOWED_ORIGINS = new Set(["https://buscore.ca", "https://www.buscore.ca"]);
-const PAGEVIEW_INGEST_VERSION = "1.8.0";
+const PAGEVIEW_INGEST_VERSION = "1.8.3";
 const PAGEVIEW_RATE_LIMIT_PER_MINUTE = 50;
 const PAGEVIEW_RAW_RETENTION_DAYS = 30;
 const PAGEVIEW_RATE_LIMIT_RETENTION_DAYS = 2;
 const TOP_PAGEVIEW_DIMENSION_LIMIT = 5;
 const DIRECT_SOURCE_LABEL = "(direct)";
+const PAGEVIEW_ALLOWED_DEVICES = new Set(["desktop", "mobile", "tablet"]);
+const PAGEVIEW_VIEWPORT_PATTERN = /^\d+x\d+$/;
 const BUSCORE_TRAFFIC_QUERY = `query DailyBuscoreTraffic($zoneTag: string, $start: Time!, $end: Time!, $host: string!) {
   viewer {
     zones(filter: { zoneTag: $zoneTag }) {
@@ -154,24 +156,119 @@ function nullIfBlank(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
-function normalizePageviewPayload(payload: unknown): PageviewInput {
+function emptyPageviewInput(): PageviewInput {
+  return {
+    client_ts: null,
+    path: null,
+    url: null,
+    referrer: null,
+    src: null,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    utm_content: null,
+    device: null,
+    viewport: null,
+    lang: null,
+    tz: null,
+  };
+}
+
+function readRequiredString(root: Record<string, unknown>, key: string, allowEmpty: boolean = false): string | null {
+  const raw = root[key];
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const normalized = raw.trim();
+  if (!allowEmpty && !normalized) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function readOptionalString(value: unknown): string | null {
+  return nullIfBlank(value);
+}
+
+function isValidAbsoluteUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseCanonicalPageviewPayload(payload: unknown): PageviewInput | null {
   const root = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
-  const utm = typeof root.utm === "object" && root.utm !== null ? (root.utm as Record<string, unknown>) : {};
+  if (root.type !== "pageview") {
+    return null;
+  }
+
+  const clientTs = readRequiredString(root, "client_ts");
+  const path = readRequiredString(root, "path");
+  const url = readRequiredString(root, "url");
+  const referrer = readRequiredString(root, "referrer", true);
+  const device = readRequiredString(root, "device");
+  const viewport = readRequiredString(root, "viewport");
+  const lang = readRequiredString(root, "lang", true);
+  const tz = readRequiredString(root, "tz", true);
+  const utmRaw = root.utm;
+
+  if (
+    !clientTs ||
+    !path ||
+    !url ||
+    referrer === null ||
+    !device ||
+    !viewport ||
+    lang === null ||
+    tz === null ||
+    typeof utmRaw !== "object" ||
+    utmRaw === null ||
+    Array.isArray(utmRaw)
+  ) {
+    return null;
+  }
+
+  if (!Number.isFinite(Date.parse(clientTs))) {
+    return null;
+  }
+
+  if (!path.startsWith("/")) {
+    return null;
+  }
+
+  if (!isValidAbsoluteUrl(url)) {
+    return null;
+  }
+
+  if (!PAGEVIEW_ALLOWED_DEVICES.has(device)) {
+    return null;
+  }
+
+  if (!PAGEVIEW_VIEWPORT_PATTERN.test(viewport)) {
+    return null;
+  }
+
+  const utm = utmRaw as Record<string, unknown>;
 
   return {
-    client_ts: nullIfBlank(root.client_ts),
-    path: nullIfBlank(root.path),
-    url: nullIfBlank(root.url),
-    referrer: nullIfBlank(root.referrer),
-    src: nullIfBlank(root.src),
-    utm_source: nullIfBlank(utm.source),
-    utm_medium: nullIfBlank(utm.medium),
-    utm_campaign: nullIfBlank(utm.campaign),
-    utm_content: nullIfBlank(utm.content),
-    device: nullIfBlank(root.device),
-    viewport: nullIfBlank(root.viewport),
-    lang: nullIfBlank(root.lang),
-    tz: nullIfBlank(root.tz),
+    client_ts: clientTs,
+    path,
+    url,
+    referrer,
+    src: readOptionalString(root.src),
+    utm_source: readOptionalString(utm.source),
+    utm_medium: readOptionalString(utm.medium),
+    utm_campaign: readOptionalString(utm.campaign),
+    utm_content: readOptionalString(utm.content),
+    device,
+    viewport,
+    lang,
+    tz,
   };
 }
 
@@ -517,7 +614,7 @@ async function persistDroppedInvalidPageview(
     requestId: string | null;
   }
 ): Promise<void> {
-  await insertPageviewRawEvent(db, buildPageviewRawEvent(normalizePageviewPayload(null), metadata, 0, "invalid_json"));
+  await insertPageviewRawEvent(db, buildPageviewRawEvent(emptyPageviewInput(), metadata, 0, "invalid_json"));
   await upsertPageviewDaily(db, metadata.receivedDay, metadata.receivedAt, {
     pageviews: 0,
     accepted: 0,
@@ -567,7 +664,12 @@ async function processPageviewIngest(request: Request, env: Env): Promise<void> 
     return;
   }
 
-  const normalized = normalizePageviewPayload(payload);
+  const normalized = parseCanonicalPageviewPayload(payload);
+  if (!normalized) {
+    await persistDroppedInvalidPageview(env.DB, metadata);
+    return;
+  }
+
   let accepted = 1;
   let dropReason: string | null = null;
 

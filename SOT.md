@@ -103,9 +103,11 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - Requests from other origins still receive the normal `204` response semantics, but Lighthouse does not grant broad cross-origin browser access for this route.
   - Never emits client-visible error detail for malformed, partial, or rate-limited submissions.
   - Uses `ctx.waitUntil(...)` so response completion stays fast for beacon and keepalive callers.
-  - Tolerates partial and missing fields.
-  - Treats `type` as advisory only and ignores unknown fields.
-  - If the body is unreadable or invalid JSON, Lighthouse still returns `204` and records the submission as dropped-invalid when persistence is available.
+  - Parses request bodies from raw text and then JSON-decodes, without requiring strict request `Content-Type` matching for valid JSON bodies.
+  - Validates the canonical emitter shape: `type = "pageview"`, required string fields `client_ts`, `path`, `url`, `referrer`, `device`, `viewport`, `lang`, `tz`, and required object field `utm` (which may be `{}`).
+  - Optional fields `src` and `utm.{source,medium,campaign,content}` may be omitted and are stored as `NULL` when missing.
+  - Empty-string values are accepted for `referrer`, `lang`, and `tz` and are stored as empty strings.
+  - If the body is unreadable, empty, invalid JSON, or contract-invalid on required fields, Lighthouse still returns `204` and records the submission as dropped-invalid when persistence is available.
   - Performs server-side enrichment with canonical `received_at`, canonical `received_day`, parsed `referrer_domain`, Cloudflare `country` when available, `request_id` from `CF-Ray` when available, and fixed `ingest_version`.
   - Canonical ordering and aggregation are always based on `received_at` / `received_day`, never `client_ts`.
   - Accepted submissions are marked `js_fired = true`.

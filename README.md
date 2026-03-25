@@ -49,7 +49,9 @@ Notes:
 - `/manifest/core/stable.json` and `/releases/:filename` never increment counters.
 - `/update/check` does not require `X-BUS-Update-Source: core` for counting.
 - If `IGNORED_IP` is configured and matches `CF-Connecting-IP`, counting is suppressed while normal responses are still returned.
-- `POST /metrics/pageview` is unauthenticated by design, accepts partial payloads, and still returns `204` for malformed or rate-limited submissions.
+- `POST /metrics/pageview` is unauthenticated by design, parses raw request text then JSON, and still returns `204` for malformed, invalid, or rate-limited submissions.
+- Valid accepted payloads follow the deployed BUS Core site emitter contract: `type = "pageview"`; required fields `client_ts`, `path`, `url`, `referrer`, `utm` object, `device`, `viewport`, `lang`, and `tz`; optional omitted fields `src` and `utm.{source,medium,campaign,content}`.
+- Empty-string values for `referrer`, `lang`, and `tz` are accepted and preserved as empty strings in raw storage.
 - `POST /metrics/pageview` and its `OPTIONS` preflight only grant browser CORS access to `https://buscore.ca` and `https://www.buscore.ca`; Lighthouse does not use wildcard allow-origin on that route.
 - The deployed site emitter contract is accepted as-is: page-load-only, beacon-first, `fetch(..., { keepalive: true })` fallback, no retries, and no session logic.
 
