@@ -73,7 +73,9 @@ const RELEASE_FILENAME = /^TGC-BUS-Core-[0-9]+\.[0-9]+\.[0-9]+\.zip$/;
 const CLOUDFLARE_GRAPHQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 const BUSCORE_HOST = "buscore.ca";
 const PAGEVIEW_ALLOWED_ORIGINS = new Set(["https://buscore.ca", "https://www.buscore.ca"]);
-const PAGEVIEW_INGEST_VERSION = "1.8.3";
+const PAGEVIEW_INGEST_VERSION = "1.8.6";
+const PAGEVIEW_INVALID_JSON_DEBUG_ENABLED = true;
+const PAGEVIEW_INVALID_JSON_DEBUG_PREVIEW_CHARS = 500;
 const PAGEVIEW_RATE_LIMIT_PER_MINUTE = 50;
 const PAGEVIEW_RAW_RETENTION_DAYS = 30;
 const PAGEVIEW_RATE_LIMIT_RETENTION_DAYS = 2;
@@ -603,6 +605,86 @@ function buildPageviewRawEvent(
   };
 }
 
+function inferPageviewTransportHint(request: Request): string {
+  const secFetchMode = nullIfBlank(request.headers.get("Sec-Fetch-Mode"));
+  const secFetchDest = nullIfBlank(request.headers.get("Sec-Fetch-Dest"));
+  const keepalive = (request as Request & { keepalive?: boolean }).keepalive === true;
+
+  if (keepalive && secFetchMode === "no-cors") {
+    return "beacon_or_keepalive_fetch_likely";
+  }
+
+  if (keepalive) {
+    return "keepalive_fetch_likely";
+  }
+
+  if (secFetchMode === "cors") {
+    return "fetch_cors_likely";
+  }
+
+  if (secFetchMode === "no-cors" && secFetchDest === "empty") {
+    return "beacon_or_fetch_no_cors_likely";
+  }
+
+  if (secFetchMode === "navigate") {
+    return "navigation_request_unexpected_for_pageview_ingest";
+  }
+
+  return "unknown";
+}
+
+function logInvalidJsonDebug(request: Request, metadata: { requestId: string | null }, bodyText: string | null): void {
+  if (!PAGEVIEW_INVALID_JSON_DEBUG_ENABLED) {
+    return;
+  }
+
+  const contentType = request.headers.get("Content-Type");
+  const rawBodyLength = bodyText === null ? null : bodyText.length;
+  const rawBodyPreview =
+    bodyText === null ? null : bodyText.slice(0, PAGEVIEW_INVALID_JSON_DEBUG_PREVIEW_CHARS);
+
+  console.warn(
+    "Pageview invalid_json debug snapshot",
+    JSON.stringify({
+      ingest_version: PAGEVIEW_INGEST_VERSION,
+      request_id: metadata.requestId,
+      content_type: contentType,
+      raw_body_length: rawBodyLength,
+      raw_body_preview: rawBodyPreview,
+      transport_hint: inferPageviewTransportHint(request),
+      sec_fetch_mode: request.headers.get("Sec-Fetch-Mode"),
+      sec_fetch_dest: request.headers.get("Sec-Fetch-Dest"),
+      keepalive: (request as Request & { keepalive?: boolean }).keepalive === true,
+    })
+  );
+}
+
+function readAndParsePageviewBody(raw: string | null):
+  | { ok: true; raw: string; payload: unknown }
+  | { ok: false; raw: string | null; reason: "unreadable_body" | "empty_body" | "invalid_json" } {
+  if (raw === null) {
+    return { ok: false, raw: null, reason: "unreadable_body" };
+  }
+
+  if (!raw.trim()) {
+    return { ok: false, raw, reason: "empty_body" };
+  }
+
+  try {
+    return { ok: true, raw, payload: JSON.parse(raw) };
+  } catch {
+    return { ok: false, raw, reason: "invalid_json" };
+  }
+}
+
+async function readRawBodyText(request: Request): Promise<string | null> {
+  try {
+    return await request.text();
+  } catch {
+    return null;
+  }
+}
+
 async function persistDroppedInvalidPageview(
   db: D1Database,
   metadata: {
@@ -623,7 +705,7 @@ async function persistDroppedInvalidPageview(
   });
 }
 
-async function processPageviewIngest(request: Request, env: Env): Promise<void> {
+async function processPageviewIngest(request: Request, rawBodyText: string | null, env: Env): Promise<void> {
   const receivedAt = new Date();
   const receivedAtIso = receivedAt.toISOString();
   const receivedDay = utcDay(receivedAt);
@@ -643,26 +725,14 @@ async function processPageviewIngest(request: Request, env: Env): Promise<void> 
     requestId: getRequestId(request),
   };
 
-  let bodyText = "";
-  try {
-    bodyText = await request.text();
-  } catch {
+  const parsedBody = readAndParsePageviewBody(rawBodyText);
+  if (!parsedBody.ok) {
+    logInvalidJsonDebug(request, metadata, parsedBody.raw);
     await persistDroppedInvalidPageview(env.DB, metadata);
     return;
   }
 
-  if (!bodyText.trim()) {
-    await persistDroppedInvalidPageview(env.DB, metadata);
-    return;
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(bodyText);
-  } catch {
-    await persistDroppedInvalidPageview(env.DB, metadata);
-    return;
-  }
+  const payload = parsedBody.payload;
 
   const normalized = parseCanonicalPageviewPayload(payload);
   if (!normalized) {
@@ -901,10 +971,13 @@ export default {
     }
 
     if (url.pathname === PAGEVIEW_METRICS_PATH && request.method === "POST") {
+      const rawBodyPromise = readRawBodyText(request);
       ctx.waitUntil(
-        processPageviewIngest(request.clone(), env).catch((error) => {
-          console.warn("Pageview ingest failed after 204 response.", error);
-        })
+        rawBodyPromise
+          .then((rawBodyText) => processPageviewIngest(request, rawBodyText, env))
+          .catch((error) => {
+            console.warn("Pageview ingest failed after 204 response.", error);
+          })
       );
       return withCors(request, new Response(null, { status: 204 }), "POST, OPTIONS");
     }

@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.8.6] - 2026-03-25
+
+### Fixed
+- Fix `POST /metrics/pageview` ingest body-read timing by initiating `request.text()` on the request path before returning `204`, then parsing and validating from that same raw string in the async ingest path.
+- Preserve single-read parsing contract (`raw text -> empty check -> JSON.parse(raw)`) while preventing unreadable-body `invalid_json` drops caused by deferred body reads.
+
+### Changed
+- Bump `ingest_version` emitted to raw pageview rows from `1.8.5` to `1.8.6`.
+
+## [1.8.5] - 2026-03-25
+
+### Fixed
+- Harden `POST /metrics/pageview` ingest parsing to an explicit single-read flow: body is read once as raw text, empty-body checked, then `JSON.parse(raw)` is applied from that same string.
+- Remove request cloning on the pageview ingest `waitUntil` path to avoid body stream edge cases that can surface as unreadable-body `invalid_json` drops while preserving fire-and-forget `204` behavior.
+
+### Changed
+- Bump `ingest_version` emitted to raw pageview rows from `1.8.4` to `1.8.5`.
+
+## [1.8.4] - 2026-03-25
+
+### Added
+- Add narrow temporary invalid-json ingest debug logging for `POST /metrics/pageview` that only runs on dropped `invalid_json` submissions and records request `Content-Type`, raw body length, first about 500 characters of body text, and an inferred beacon/fetch transport hint.
+
+### Changed
+- Bump `ingest_version` emitted to raw pageview rows from `1.8.3` to `1.8.4` to mark runtime with temporary invalid-json diagnostics enabled.
+
 ## [1.8.3] - 2026-03-25
 
 ### Fixed
