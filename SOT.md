@@ -2,11 +2,11 @@
 
 ## 1. System Overview
 
-- Lighthouse is a single Cloudflare Worker that acts as a minimal, privacy-first, aggregate-only stats source.
+- Lighthouse is a single Cloudflare Worker that acts as a minimal, privacy-first, aggregate-first stats source with one narrow first-party pageview ingestion path.
 - Lighthouse is a generic, deterministic metrics primitive; BUS Core is a current observed client/use-case, not a runtime dependency.
-- It serves/proxies manifest data from R2, records daily aggregate counters in D1, records daily Buscore traffic snapshots in D1, and exposes an admin-protected `GET /report` endpoint.
+- It serves/proxies manifest data from R2, records daily aggregate counters in D1, records daily Buscore traffic snapshots in D1, accepts first-party pageview events into D1, and exposes an admin-protected `GET /report` endpoint.
 - It does not post reports to Discord.
-- Runtime surface: Worker `fetch` handler plus one scheduled daily traffic capture handler.
+- Runtime surface: Worker `fetch` handler plus one scheduled daily traffic capture and retention handler.
 
 ### Version and Release Authority
 
@@ -27,23 +27,25 @@ Additional constraints:
 The following rules are non-negotiable unless this SOT is explicitly revised:
 
 - Lighthouse is a single Cloudflare Worker.
-- Lighthouse is privacy-first and aggregate-only.
+- Lighthouse is privacy-first and aggregate-first.
 - Lighthouse is operationally independent and independently runnable.
 - Core operation must not depend on BUS Core or any external service.
 - Reporting is on-demand.
-- Scheduled behavior is limited to one approved daily Buscore traffic capture job defined in this SOT.
+- Scheduled behavior is limited to one approved daily Buscore traffic capture and retention run defined in this SOT.
+- One unauthenticated first-party pageview ingestion endpoint is approved and documented in this SOT.
 - No outbound posting or outbound integrations unless explicitly approved in this SOT.
 - The current fixed metric model (`update_checks`, `downloads`, `errors`) is shipped behavior unless this SOT explicitly changes it.
 - Buscore traffic telemetry is an additive extension for operator visibility and system understanding; it must not break or reinterpret the shipped core metric model.
+- Raw pageview retention must remain narrow, short-lived, and non-identifying.
 - SOT, changelog, and implementation must stay aligned.
 
 ## 3. Entry Points
 
-`fetch(request, env)` in `src/index.ts` handles:
+`fetch(request, env, ctx)` in `src/index.ts` handles:
 
 `scheduled(controller, env, ctx)` in `src/index.ts` handles:
 
-### Daily Buscore Traffic Capture
+### Daily Buscore Traffic Capture and Retention
 
 - Runs once per day on a Worker cron.
 - Uses one Cloudflare GraphQL Analytics API query per scheduled run for traffic totals.
@@ -59,7 +61,8 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 - Capture is idempotent per day: reruns converge to one final row for that day.
 - If the traffic totals Cloudflare pull fails or returns GraphQL errors, Lighthouse skips the row for that day entirely.
 - If the traffic query returns no daily row for the selected day and hostname, Lighthouse treats that run as failed and skips the row.
-- This scheduled traffic capture is additive and non-blocking. Lighthouse core request handling and core metric reporting remain operational if the Cloudflare pull path is unavailable.
+- The same scheduled run prunes raw pageview rows older than about 30 UTC days and prunes stale rate-limit buckets older than about 2 days.
+- This scheduled behavior is additive and non-blocking. Lighthouse core request handling and core metric reporting remain operational if the Cloudflare pull path is unavailable.
 
 ### Manifest Service
 
@@ -89,28 +92,59 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - Returns `200` with artifact body when object exists.
   - Returns `404` JSON `{ "ok": false, "error": "not_found" }` when missing or filename is invalid.
 
+### First-Party Pageview Ingestion
+
+- `POST /metrics/pageview`
+  - Unauthenticated by design.
+  - Accepts JSON request bodies from the already-deployed BUS Core site emitter contract.
+  - Always returns `204 No Content` with no response body.
+  - Never emits client-visible error detail for malformed, partial, or rate-limited submissions.
+  - Uses `ctx.waitUntil(...)` so response completion stays fast for beacon and keepalive callers.
+  - Tolerates partial and missing fields.
+  - Treats `type` as advisory only and ignores unknown fields.
+  - If the body is unreadable or invalid JSON, Lighthouse still returns `204` and records the submission as dropped-invalid when persistence is available.
+  - Performs server-side enrichment with canonical `received_at`, canonical `received_day`, parsed `referrer_domain`, Cloudflare `country` when available, `request_id` from `CF-Ray` when available, and fixed `ingest_version`.
+  - Canonical ordering and aggregation are always based on `received_at` / `received_day`, never `client_ts`.
+  - Accepted submissions are marked `js_fired = true`.
+  - Lighthouse accepts the deployed site emitter contract as authoritative and does not add auth, retries, session tracking, identity, unload analytics, or client/server reconciliation logic.
+
+### Pageview Noise Control
+
+- Lighthouse applies a narrow anti-noise guard of approximately 50 events per IP hash per UTC minute.
+- Rate limiting uses D1 minute buckets keyed by SHA-256 IP hash only; raw IPs are never stored.
+- Rate-limited submissions still return `204` but are excluded from accepted aggregates.
+
+### Reporting
+
 - `GET /report`
   - Requires header `X-Admin-Token`.
   - Auth check is exact equality against `env.ADMIN_TOKEN`:
     - `const token = request.headers.get("X-Admin-Token")`
     - `if (!env.ADMIN_TOKEN || !token || token !== env.ADMIN_TOKEN) { ...401 unauthorized... }`
   - On auth failure: returns `401` JSON `{ "ok": false, "error": "unauthorized" }`.
-  - On success: returns aggregate stats JSON with `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, and additive top-level `traffic`.
+  - On success: returns aggregate stats JSON with `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, additive top-level `traffic`, and additive top-level `human_traffic`.
   - Before assembling the response, Lighthouse always performs one best-effort refresh capture for the previous completed UTC day using the same traffic capture logic as the scheduled path.
   - The refresh remains idempotent via per-day upsert semantics and keeps one stored row per completed UTC day.
   - If this best-effort refresh attempt fails, `/report` still returns successfully using only currently stored traffic data.
   - This behavior is additive and does not replace the scheduled daily capture job.
 
-- Fallback behavior
-  - `OPTIONS` returns `200`.
-  - Non-`GET` methods return `405` JSON `{ "ok": false, "error": "method_not_allowed" }`.
-  - Unmatched routes return `404` JSON `{ "ok": false, "error": "not_found" }`.
+### Fallback Behavior
+
+- `OPTIONS` returns `200`.
+- `OPTIONS /metrics/pageview` advertises `POST, OPTIONS` for the ingestion route.
+- `POST /metrics/pageview` is the one approved non-`GET` route.
+- Other non-`GET` methods return `405` JSON `{ "ok": false, "error": "method_not_allowed" }`.
+- Unmatched routes return `404` JSON `{ "ok": false, "error": "not_found" }`.
 
 ## 4. Persistence
 
 - D1 binding: `DB`
 - Table: `metrics_daily`
 - Table: `buscore_traffic_daily`
+- Table: `pageview_events_raw`
+- Table: `pageview_daily`
+- Table: `pageview_daily_dim`
+- Table: `pageview_rate_limit`
 - Aggregate counters: `update_checks`, `downloads`, `errors`
 - Day key format: UTC `YYYY-MM-DD`
 - `buscore_traffic_daily` schema:
@@ -121,6 +155,14 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
 - `buscore_traffic_daily` stores one row per completed UTC day only.
 - `requests` is sourced from daily request `count` on `httpRequestsAdaptiveGroups`.
 - `visits` is sourced from `sum.visits` on `httpRequestsAdaptiveGroups` when present, and remains nullable.
+- `pageview_events_raw` stores append-only first-party pageview submissions for about 30 UTC days with only narrow event fields required for inspectability, debugging, and source/path attribution.
+- `pageview_events_raw` stores `ip_hash` and `user_agent_hash` as SHA-256 hashes when those source values are present; Lighthouse does not store raw IPs, identity, or session state.
+- `pageview_events_raw.accepted = 1` means the submission counted toward accepted pageview aggregates.
+- `pageview_events_raw.drop_reason` is currently limited to `invalid_json` and `rate_limited` when populated.
+- `pageview_daily` stores one row per `received_day` with accepted pageview totals, drop counters, and the latest observed `received_at` for that day.
+- `pageview_daily.pageviews` and `pageview_daily.accepted` increment together for accepted submissions.
+- `pageview_daily_dim` stores accepted dimension counts for exactly four dimension types: `path`, `referrer_domain`, `src`, and `utm_source`.
+- `pageview_rate_limit` stores approximate per-minute IP-hash counters only for ingestion noise control and has no reporting role.
 
 ## 5. Configuration
 
@@ -137,6 +179,8 @@ Not used by current code:
 
 - Discord webhook secrets
 
+No new bindings or secrets are introduced by pageview ingestion.
+
 ## 6. Reporting Model
 
 - Reporting is on-demand only via authenticated `GET /report`.
@@ -148,11 +192,19 @@ Not used by current code:
 ### Report Contract Stability
 
 - `GET /report` is an operator-facing contract, not an ad-hoc analytics surface.
-- Current shipped response shape includes: `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, `traffic`.
+- Current shipped response shape includes: `today`, `yesterday`, `last_7_days`, `month_to_date`, `trends`, `traffic`, `human_traffic`.
 - Current shipped `trends` fields include: `downloads_change_percent`, `update_checks_change_percent`, `weekly_downloads_change_percent`, `weekly_update_checks_change_percent`, `conversion_ratio`.
 - `conversion_ratio` is defined as today downloads divided by today update checks (with safe zero-denominator handling).
 - `traffic.latest_day` contains the most recent completed UTC day stored in `buscore_traffic_daily` with fields `day`, `visits`, `requests`, `captured_at`.
 - `traffic.last_7_days` contains aggregate traffic fields `visits`, `requests`, `avg_daily_visits`, `avg_daily_requests`, and `days_with_data` across stored rows in the last seven UTC days.
+- Existing `traffic` remains the Cloudflare-derived traffic summary and its semantics are unchanged by pageview ingestion.
+- `human_traffic` is additive only and represents JS-fired first-party pageview telemetry, not verified-human analytics.
+- `human_traffic.today` contains `pageviews` and `last_received_at` for the current UTC day.
+- `human_traffic.last_7_days` contains accepted `pageviews`, `days_with_data`, `top_paths`, `top_referrers`, and `top_sources` across the current UTC day plus the previous six UTC days.
+- `human_traffic.last_7_days.top_paths` entries use `{ path, pageviews }`.
+- `human_traffic.last_7_days.top_referrers` entries use `{ referrer_domain, pageviews }`.
+- `human_traffic.last_7_days.top_sources` entries use `{ source, pageviews }` with deterministic precedence `src -> utm.source -> (direct)`.
+- `human_traffic.observability` is cumulative across stored pageview aggregate rows and contains `accepted`, `dropped_rate_limited`, `dropped_invalid`, and `last_received_at`.
 - Existing non-traffic `/report` fields remain intact and semantically unchanged.
 - If a requested traffic window has no stored traffic rows, its traffic fields return `NULL` rather than synthetic zeroes.
 - `avg_daily_visits` and `avg_daily_requests` are computed using `days_with_data` (stored rows in the 7-day window) as the divisor; Lighthouse does not divide by seven unless seven rows exist.
@@ -162,9 +214,10 @@ Not used by current code:
 
 ## 7. Privacy and Security
 
-- Aggregate-only storage in D1.
-- No user identifiers, cookies, or tracking.
-- Traffic capture uses Cloudflare aggregate analytics only; no raw request logging is introduced.
+- Aggregate-first storage in D1 with narrow raw pageview retention for about 30 UTC days.
+- No user identifiers, identity model, cookies, or session tracking are introduced by Lighthouse.
+- First-party pageview ingestion stores hashed IP and hashed user-agent values only when present and does not store raw IPs.
+- Traffic capture uses Cloudflare aggregate analytics only; no raw request logging is introduced outside the documented narrow pageview ingestion path.
 - `/report` is protected by `X-Admin-Token` exact match to `env.ADMIN_TOKEN`.
 
 ## 8. Explicit Non-Features
@@ -173,5 +226,5 @@ Not used by current code:
 - No scheduled outbound reporting.
 - No Discord webhook integration.
 - No automatic push reporting.
-- No push traffic ingestion endpoint.
 - No broad analytics warehousing.
+- No retries, unload-trigger analytics, session tracking, or identity semantics for pageview ingestion.

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0] - 2026-03-25
+
+### Added
+- Add unauthenticated `POST /metrics/pageview` for narrow first-party JS-fired pageview ingestion, with `204 No Content` responses for valid, partial, rate-limited, and malformed request bodies.
+- Add D1 migration `0005_add_pageview_ingestion.sql` with raw pageview event retention, daily pageview aggregates, per-dimension aggregate rows, and per-minute hashed-IP rate-limit buckets.
+- Extend authenticated `GET /report` with additive top-level `human_traffic` for compact JS-fired pageview reporting, including `today`, `last_7_days`, and cumulative `observability` sections.
+
+### Changed
+- Lighthouse now accepts the already-deployed BUS Core site emitter contract as-is: page-load-only events, no auth, no retries, no session logic, and no client contract changes.
+- Raw pageview events are retained in D1 for about 30 UTC days with hashed IP and hashed user-agent values for inspectability without introducing identity semantics.
+- Scheduled execution now also prunes expired raw pageview rows and stale rate-limit buckets while preserving the existing once-daily Cloudflare traffic capture.
+- `human_traffic.last_7_days.top_sources` uses deterministic source precedence `src -> utm.source -> (direct)`.
+
 ## [1.7.0] - 2026-03-24
 
 ### Removed
