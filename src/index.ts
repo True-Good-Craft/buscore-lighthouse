@@ -205,6 +205,17 @@ const TRACKED_SITES: readonly TrackedSite[] = [
     cloudflare_host: null,
     production_only_default: true,
   },
+  {
+    site_key: "tgc_site",
+    label: "True Good Craft",
+    status: "active",
+    production_hosts: ["truegoodcraft.ca", "www.truegoodcraft.ca"],
+    allowed_origins: ["https://truegoodcraft.ca", "https://www.truegoodcraft.ca"],
+    staging_hosts: [],
+    cloudflare_traffic_enabled: false,
+    cloudflare_host: null,
+    production_only_default: true,
+  },
 ];
 
 const MANIFEST_PATH = "/manifest/core/stable.json";

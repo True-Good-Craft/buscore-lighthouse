@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.2] - 2026-04-03
+
+### Changed
+- Register True Good Craft website tracked-site entry as `site_key: "tgc_site"` with production hosts `truegoodcraft.ca` and `www.truegoodcraft.ca`.
+- Add browser origin allow-list entries for `https://truegoodcraft.ca` and `https://www.truegoodcraft.ca` on `POST /metrics/event` via the active tracked-site registry.
+- Keep Cloudflare traffic capture disabled for `tgc_site` (`cloudflare_traffic_enabled: false`, `cloudflare_host: null`).
+
 ## [1.11.1] - 2026-04-02
 
 ### Changed

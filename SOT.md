@@ -100,6 +100,7 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - Each registry entry carries: `site_key`, `label`, `status` (`active` | `staging` | `planned`), `production_hosts`, `allowed_origins`, `staging_hosts`, `cloudflare_traffic_enabled`, `cloudflare_host`, and `production_only_default`.
   - BUS Core is registered as `site_key: "buscore"` with `status: "active"`. Its CORS allow-list (`https://buscore.ca`, `https://www.buscore.ca`) and Cloudflare traffic capture host (`buscore.ca`) are derived from its registry entry.
   - Star Map Generator is registered as `site_key: "star_map_generator"` with `status: "active"`, production host `starmap.truegoodcraft.ca`, and allowed browser origin `https://starmap.truegoodcraft.ca`.
+  - True Good Craft website is registered as `site_key: "tgc_site"` with `status: "active"`, production hosts `truegoodcraft.ca` and `www.truegoodcraft.ca`, allowed browser origins `https://truegoodcraft.ca` and `https://www.truegoodcraft.ca`, and Cloudflare traffic capture disabled.
   - CORS origin policy for `POST /metrics/pageview` is scoped exclusively to the `buscore` registry entry.
   - CORS origin policy for `POST /metrics/event` is derived from the union of all `active` tracked-site `allowed_origins` entries.
   - Adding a new tracked site requires only a registry entry update. No structural changes to Lighthouse endpoints are needed.
