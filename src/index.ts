@@ -197,9 +197,9 @@ const TRACKED_SITES: readonly TrackedSite[] = [
   {
     site_key: "star_map_generator",
     label: "Star Map Generator",
-    status: "planned",
-    production_hosts: [],
-    allowed_origins: [],
+    status: "active",
+    production_hosts: ["starmap.truegoodcraft.ca"],
+    allowed_origins: ["https://starmap.truegoodcraft.ca"],
     staging_hosts: [],
     cloudflare_traffic_enabled: false,
     cloudflare_host: null,

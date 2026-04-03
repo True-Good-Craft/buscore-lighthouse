@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.1] - 2026-04-02
+
+### Changed
+- Register Star Map launch host/origin in tracked-site registry for `site_key: "star_map_generator"`: `production_hosts` now includes `starmap.truegoodcraft.ca` and `allowed_origins` now includes `https://starmap.truegoodcraft.ca`.
+- Promote `star_map_generator` tracked-site status from `planned` to `active` so `/metrics/event` CORS allow-listing now permits Star Map browser-origin ingestion.
+
 ## [1.11.0] - 2026-03-31
 
 ### Added

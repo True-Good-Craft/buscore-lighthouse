@@ -99,7 +99,7 @@ The following rules are non-negotiable unless this SOT is explicitly revised:
   - Lighthouse maintains a code-level tracked-site registry (`TRACKED_SITES`) defining every site/property for which it may receive events or capture traffic.
   - Each registry entry carries: `site_key`, `label`, `status` (`active` | `staging` | `planned`), `production_hosts`, `allowed_origins`, `staging_hosts`, `cloudflare_traffic_enabled`, `cloudflare_host`, and `production_only_default`.
   - BUS Core is registered as `site_key: "buscore"` with `status: "active"`. Its CORS allow-list (`https://buscore.ca`, `https://www.buscore.ca`) and Cloudflare traffic capture host (`buscore.ca`) are derived from its registry entry.
-  - Star Map Generator is registered as `site_key: "star_map_generator"` with `status: "planned"`. Production hosts and allowed origins are empty pending production URL assignment.
+  - Star Map Generator is registered as `site_key: "star_map_generator"` with `status: "active"`, production host `starmap.truegoodcraft.ca`, and allowed browser origin `https://starmap.truegoodcraft.ca`.
   - CORS origin policy for `POST /metrics/pageview` is scoped exclusively to the `buscore` registry entry.
   - CORS origin policy for `POST /metrics/event` is derived from the union of all `active` tracked-site `allowed_origins` entries.
   - Adding a new tracked site requires only a registry entry update. No structural changes to Lighthouse endpoints are needed.
@@ -287,7 +287,7 @@ No new bindings or secrets are introduced by pageview ingestion.
 ## 8. Explicit Non-Features
 
 - No `/health` route in current code.
-- Star Map Generator production URL is not yet defined and must remain configurable via the tracked-site registry.
+- Star Map Generator launch registration is tracked via the tracked-site registry (`production_hosts` and `allowed_origins`) and must remain registry-configurable.
 - No scheduled outbound reporting.
 - No Discord webhook integration.
 - No automatic push reporting.
