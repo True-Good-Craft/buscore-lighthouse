@@ -1,3 +1,4 @@
+import { KFH_OUTREACH_SOURCES, KFH_OUTREACH_CAMPAIGNS, KFH_OUTREACH_CONTENTS, isKfhOutreach, type Outreach } from "./kfhOutreachContract.js";
 // Kingston's sensitive-use directory keeps only separate daily totals.
 // No raw event, provider context, identity or cross-dimension journey is stored.
 export const KFH_SITE_KEY = "kingston_food_help";
@@ -19,13 +20,15 @@ export const KFH_LIMITATIONS = {
 
 export const KFH_LEGACY_LIMITATIONS = { ...KFH_LIMITATIONS, counts_are: "consented_activity_not_people_or_service_outcomes" } as const;
 
+export const KFH_OUTREACH_LIMITATIONS = { ...KFH_LIMITATIONS, attribution: "separate_daily_public_outreach_action_totals" } as const;
+
 export type CountKey = typeof KFH_COUNT_KEYS[number];
 export type WindowKey = typeof KFH_WINDOW_KEYS[number];
 export type Counts = Record<CountKey, number>;
 type Dimension = { value: string; count: number };
 export type KfhReport = {
   view: "kfh";
-  report_contract_version: "1.0" | "1.1";
+  report_contract_version: "1.0" | "1.1" | "1.2";
   site_key: typeof KFH_SITE_KEY;
   generated_at: string;
   source: {
@@ -36,7 +39,8 @@ export type KfhReport = {
   };
   windows: Record<WindowKey, { start_day: string; end_day: string; partial: boolean; counts: Counts | null }>;
   discovery_last_7_complete_days: { sources: Dimension[]; campaigns: Dimension[]; contents: Dimension[] } | null;
-  limitations: typeof KFH_LIMITATIONS | typeof KFH_LEGACY_LIMITATIONS;
+  outreach_last_7_complete_days?: Outreach | null;
+  limitations: typeof KFH_LIMITATIONS | typeof KFH_LEGACY_LIMITATIONS | typeof KFH_OUTREACH_LIMITATIONS;
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -58,12 +62,13 @@ export function kfhWindowDays(now: Date): Record<WindowKey, [string, string]> {
 
 // Strict shared producer/consumer contract. No runtime schema compiler is needed.
 export function isKfhReport(value: unknown): value is KfhReport {
-  if (!exact(value, ["view", "report_contract_version", "site_key", "generated_at", "source", "windows", "discovery_last_7_complete_days", "limitations"])) return false;
-  if (value.view !== "kfh" || (value.report_contract_version !== "1.0" && value.report_contract_version !== "1.1") || value.site_key !== KFH_SITE_KEY) return false;
+  const outreach = isObject(value) && value.report_contract_version === "1.2";
+  if (!exact(value, [...(outreach ? ["outreach_last_7_complete_days"] : []), "view", "report_contract_version", "site_key", "generated_at", "source", "windows", "discovery_last_7_complete_days", "limitations"])) return false;
+  if (value.view !== "kfh" || (value.report_contract_version !== "1.0" && value.report_contract_version !== "1.1" && !outreach) || value.site_key !== KFH_SITE_KEY) return false;
   if (typeof value.generated_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.generated_at)
     || !Number.isFinite(Date.parse(value.generated_at)) || new Date(value.generated_at).toISOString() !== value.generated_at) return false;
   if (!exact(value.limitations, Object.keys(KFH_LIMITATIONS))) return false;
-  const limitations = value.report_contract_version === "1.0" ? KFH_LEGACY_LIMITATIONS : KFH_LIMITATIONS;
+  const limitations = value.report_contract_version === "1.0" ? KFH_LEGACY_LIMITATIONS : outreach ? KFH_OUTREACH_LIMITATIONS : KFH_LIMITATIONS;
   for (const [key, expected] of Object.entries(limitations)) if (value.limitations[key] !== expected) return false;
   const source = value.source;
   if (!exact(source, ["availability", "reason", "first_observed_day", "last_observed_day"])) return false;
@@ -90,11 +95,11 @@ export function isKfhReport(value: unknown): value is KfhReport {
     }
   }
   const discovery = value.discovery_last_7_complete_days;
-  if (unavailable) return discovery === null;
+  if (unavailable) return discovery === null && (!outreach || value.outreach_last_7_complete_days === null);
   if (!exact(discovery, ["sources", "campaigns", "contents"])) return false;
   const windows = value.windows as KfhReport["windows"];
   const views = windows.last_7_complete_days.counts!.page_views;
-  for (const [key, allowed] of [["sources", KFH_SOURCES], ["campaigns", KFH_CAMPAIGNS], ["contents", KFH_CONTENTS]] as const) {
+  for (const [key, allowed] of [["sources", outreach ? KFH_OUTREACH_SOURCES : KFH_SOURCES], ["campaigns", outreach ? KFH_OUTREACH_CAMPAIGNS : KFH_CAMPAIGNS], ["contents", outreach ? KFH_OUTREACH_CONTENTS : KFH_CONTENTS]] as const) {
     const rows = discovery[key];
     if (!Array.isArray(rows) || rows.length > allowed.length) return false;
     const seen = new Set<string>();
@@ -105,6 +110,13 @@ export function isKfhReport(value: unknown): value is KfhReport {
       seen.add(row.value); total += row.count;
     }
     if (!Number.isSafeInteger(total) || total !== views) return false;
+  }
+  if (outreach && !isKfhOutreach(value.outreach_last_7_complete_days, windows.last_7_complete_days.counts!)) return false;
+  if (outreach) for (const key of ["sources", "campaigns", "contents"] as const) {
+    const allViews = (discovery[key] as { value: string; count: number }[]);
+    for (const row of (value.outreach_last_7_complete_days as Outreach)[key]) {
+      if (row.event === "page_views" && row.count > (allViews.find(all => all.value === row.value)?.count ?? 0)) return false;
+    }
   }
   // These windows overlap by definition. A contradictory report is unavailable.
   for (const key of KFH_COUNT_KEYS) {

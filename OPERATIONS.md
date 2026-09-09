@@ -1,5 +1,9 @@
 # Lighthouse Operations and Diagnostics
 
+## 2026-09-09 outreach review candidate
+
+The coordinated review changes and exact owner-controlled release order are in [KFH_OUTREACH_RELEASE.md](KFH_OUTREACH_RELEASE.md). Branch publication is authorized; production activation is pending owner review. Older dated operations below remain historical where the new release review supersedes them.
+
 ## Kingston default-on rollout — 1.33.0
 
 Jamie explicitly changed Kingston to default-on aggregate analytics with an opt-out in Your privacy and no popup, and authorized the coordinated changes and production deployment. Existing saved no choices, GPC/DNT, dev_mode and noAnalytics suppression remain effective. No additional context, identifiers, raw history, queue, retries or third-party analytics are introduced.

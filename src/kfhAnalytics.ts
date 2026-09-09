@@ -1,5 +1,7 @@
-import { KFH_SITE_KEY, KFH_ORIGINS, KFH_SOURCES, KFH_CAMPAIGNS, KFH_CONTENTS, KFH_COUNT_KEYS, KFH_WINDOW_KEYS, KFH_LIMITATIONS, type CountKey, type Counts, type WindowKey, type KfhReport, isKfhReport } from "./kfhContract.js";
+import { KFH_SITE_KEY, KFH_ORIGINS, KFH_SOURCES, KFH_CAMPAIGNS, KFH_CONTENTS, KFH_COUNT_KEYS, KFH_WINDOW_KEYS, KFH_OUTREACH_LIMITATIONS, type CountKey, type Counts, type WindowKey, type KfhReport, isKfhReport } from "./kfhContract.js";
+import { KFH_OUTREACH_SOURCES, KFH_OUTREACH_CAMPAIGNS, KFH_OUTREACH_CONTENTS, KFH_ATTRIBUTABLE_KEYS, type AttributableKey, type Outreach, type OutreachCounts, type OutreachRow } from "./kfhOutreachContract.js";
 type Row = { day: string; metric: string; value: string; count: number };
+type StoredOutreach = OutreachRow & { day: string; dimension: string };
 type Dimension = { value: string; count: number };
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -9,31 +11,49 @@ function member(value: unknown, allowed: readonly string[]): value is string {
   return typeof value === "string" && allowed.includes(value);
 }
 
-export function parseKfhEvent(value: unknown): { counter: CountKey; source?: string; campaign?: string; content?: string } | null {
+export function parseKfhEvent(value: unknown): { counter: CountKey; outreach?: true; source?: string; campaign?: string; content?: string } | null {
   if (!object(value)) return null;
   if (value.site_key !== KFH_SITE_KEY || value.page !== "directory") return null;
   const legacy = value.contract_version === 1 && value.consent === true;
-  const optOut = value.contract_version === 2 && value.collection_mode === "opt_out";
+  const outreach = value.contract_version === 3 && value.collection_mode === "opt_out";
+  const optOut = (value.contract_version === 2 || outreach) && value.collection_mode === "opt_out";
   if (!legacy && !optOut) return null;
   const keys = ["site_key", "contract_version", legacy ? "consent" : "collection_mode", "page", "event_name"];
-  if (value.event_name === "page_view") {
+  if (value.event_name === "page_view" || (outreach && (value.event_name === "contact_click" || value.event_name === "outbound_click"))) {
     keys.push("source", "campaign", "content");
+    if (value.event_name !== "page_view") keys.push("event_value");
     if (Object.keys(value).some(key => !keys.includes(key))) return null;
     const source = value.source === undefined ? "direct_unknown" : value.source;
     const campaign = value.campaign === undefined ? "none" : value.campaign;
     const content = value.content === undefined ? "none" : value.content;
-    if (!member(source, KFH_SOURCES) || !member(campaign, KFH_CAMPAIGNS) || !member(content, KFH_CONTENTS)) return null;
-    return { counter: "page_views", source, campaign, content };
+    if (!member(source, outreach ? KFH_OUTREACH_SOURCES : KFH_SOURCES)
+      || !member(campaign, outreach ? KFH_OUTREACH_CAMPAIGNS : KFH_CAMPAIGNS)
+      || !member(content, outreach ? KFH_OUTREACH_CONTENTS : KFH_CONTENTS)) return null;
+    // v3 must carry all labels: missing attribution is not silently classified.
+    if (outreach && [value.source, value.campaign, value.content].some(label => label === undefined)) return null;
+    const counter = value.event_name === "page_view" ? "page_views" : actionCounter(value.event_name, value.event_value);
+    return counter ? { counter, ...(outreach ? { outreach: true as const } : {}), source, campaign, content } : null;
   }
   if (value.event_name !== "pwa_install") keys.push("event_value");
   if (Object.keys(value).some(key => !keys.includes(key))) return null;
   if (value.event_name === "pwa_install") return { counter: "pwa_installs" };
-  if (value.event_name === "contact_click" && value.event_value === "resource_call") return { counter: "resource_calls" };
-  if (value.event_name === "contact_click" && value.event_value === "help_211") return { counter: "help_211" };
-  if (value.event_name === "outbound_click" && value.event_value === "directions") return { counter: "directions" };
-  if (value.event_name === "outbound_click" && value.event_value === "official_source") return { counter: "official_sources" };
+  const counter = actionCounter(value.event_name, value.event_value);
+  return counter ? { counter } : null;
+}
+
+function actionCounter(name: unknown, value: unknown): AttributableKey | null {
+  if (name === "contact_click" && value === "resource_call") return "resource_calls";
+  if (name === "contact_click" && value === "help_211") return "help_211";
+  if (name === "outbound_click" && value === "directions") return "directions";
+  if (name === "outbound_click" && value === "official_source") return "official_sources";
   return null;
 }
+
+// Keep the old table valid for a rolled-back Worker, including its page margins.
+const legacyLabel = (dimension: string, value: string) => dimension === "source"
+  ? member(value, KFH_SOURCES) ? value : "other"
+  : dimension === "campaign" ? member(value, KFH_CAMPAIGNS) ? value : "none"
+  : member(value, KFH_CONTENTS) ? value : "none";
 
 export async function readKfhBody(request: Request): Promise<string | null> {
   if (!request.body) return null;
@@ -68,26 +88,36 @@ export async function ingestKfhEvent(
   if (!event || !(await allowRate())) return;
   const dimensions = [["event", event.counter]];
   if (event.counter === "page_views") {
-    dimensions.push(["source", event.source!], ["campaign", event.campaign!], ["content", event.content!]);
+    dimensions.push(["source", legacyLabel("source", event.source!)], ["campaign", legacyLabel("campaign", event.campaign!)], ["content", legacyLabel("content", event.content!)]);
   }
-  // D1 batch is atomic: a view cannot have a partially written attribution set.
-  await db.batch(dimensions.map(([metric, value]) => db.prepare(
+  const statements = dimensions.map(([metric, value]) => db.prepare(
     "INSERT INTO kfh_daily(day, metric, value, count) VALUES (?, ?, ?, 1) ON CONFLICT(day, metric, value) DO UPDATE SET count = count + 1",
-  ).bind(day(now), metric, value)));
+  ).bind(day(now), metric, value));
+  if (event.outreach) for (const [dimension, value] of [["source", event.source], ["campaign", event.campaign], ["content", event.content]]) {
+    statements.push(db.prepare("INSERT INTO kfh_outreach_daily(day, event, dimension, value, count) VALUES (?, ?, ?, ?, 1) ON CONFLICT(day, event, dimension, value) DO UPDATE SET count = count + 1")
+      .bind(day(now), event.counter, dimension, value));
+  }
+  // All totals and independent margins succeed together; never store a raw event.
+  await db.batch(statements);
 }
 
 export async function pruneKfhData(db: D1Database, now: Date = new Date()): Promise<void> {
-  await db.prepare("DELETE FROM kfh_daily WHERE day < ?").bind(shiftDay(now, -399)).run();
+  await db.batch(["kfh_daily", "kfh_outreach_daily"].map(table => db.prepare(`DELETE FROM ${table} WHERE day < ?`).bind(shiftDay(now, -399))));
 }
 
 export async function buildKfhReport(db: D1Database, now: Date = new Date()): Promise<KfhReport> {
   let rows: Row[] = [];
+  let outreachRows: StoredOutreach[] = [];
   let available = true;
   try {
     const result = await db.prepare("SELECT day, metric, value, count FROM kfh_daily WHERE day >= ? AND day <= ? ORDER BY day, metric, value")
       .bind(shiftDay(now, -399), day(now)).all<Row>();
     if (!result.success || !Array.isArray(result.results)) throw new Error("unavailable");
     rows = result.results;
+    const outreach = await db.prepare("SELECT day, event, dimension, value, count FROM kfh_outreach_daily WHERE day >= ? AND day <= ? ORDER BY day, event, dimension, value")
+      .bind(shiftDay(now, -399), day(now)).all<StoredOutreach>();
+    if (!outreach.success || !Array.isArray(outreach.results)) throw new Error("unavailable");
+    outreachRows = outreach.results;
     // Fail closed on corrupt/incompatible aggregate rows; no raw values leave here.
     for (const row of rows) {
       const allowed = row.metric === "event" ? KFH_COUNT_KEYS : row.metric === "source" ? KFH_SOURCES
@@ -95,11 +125,16 @@ export async function buildKfhReport(db: D1Database, now: Date = new Date()): Pr
       if (!/^\d{4}-\d{2}-\d{2}$/.test(row.day) || !member(row.value, allowed)
         || !Number.isSafeInteger(row.count) || row.count < 1) throw new Error("unavailable");
     }
+    for (const row of outreachRows) {
+      const allowed = row.dimension === "source" ? KFH_OUTREACH_SOURCES : row.dimension === "campaign" ? KFH_OUTREACH_CAMPAIGNS : row.dimension === "content" ? KFH_OUTREACH_CONTENTS : [];
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(row.day) || !member(row.event, KFH_ATTRIBUTABLE_KEYS)
+        || !member(row.value, allowed) || !Number.isSafeInteger(row.count) || row.count < 1) throw new Error("unavailable");
+    }
   } catch { available = false; rows = []; }
-  return kfhReportFromRows(available ? rows : null, now);
+  return kfhReportFromRows(available ? rows : null, now, available ? outreachRows : []);
 }
 
-function kfhReportFromRows(input: Row[] | null, now: Date): KfhReport {
+function kfhReportFromRows(input: Row[] | null, now: Date, outreachRows: StoredOutreach[] = []): KfhReport {
   const available = input !== null;
   const rows = input ?? [];
   const eventDays = rows.filter(row => row.metric === "event").map(row => row.day).sort();
@@ -120,10 +155,32 @@ function kfhReportFromRows(input: Row[] | null, now: Date): KfhReport {
     for (const row of rows) if (row.metric === metric && row.day >= shiftDay(now, -7) && row.day <= shiftDay(now, -1)) {
       totals.set(row.value, (totals.get(row.value) ?? 0) + row.count);
     }
-    return [...totals].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    for (const row of outreachRows) if (row.event === "page_views" && row.dimension === metric && inWeek(row.day)) {
+      const fallback = legacyLabel(metric, row.value);
+      totals.set(fallback, (totals.get(fallback) ?? 0) - row.count);
+      totals.set(row.value, (totals.get(row.value) ?? 0) + row.count);
+    }
+    return [...totals].filter(([, count]) => count !== 0).map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
   };
+  const inWeek = (date: string) => date >= shiftDay(now, -7) && date <= shiftDay(now, -1);
+  const outreach: Outreach = {
+    classified: Object.fromEntries(KFH_ATTRIBUTABLE_KEYS.map(key => [key, 0])) as OutreachCounts,
+    unclassified: Object.fromEntries(KFH_ATTRIBUTABLE_KEYS.map(key => [key, 0])) as OutreachCounts,
+    sources: [], campaigns: [], contents: [],
+  };
+  for (const [dimension, key] of [["source", "sources"], ["campaign", "campaigns"], ["content", "contents"]] as const) {
+    const totals = new Map<string, OutreachRow>();
+    for (const row of outreachRows) if (row.dimension === dimension && inWeek(row.day)) {
+      const id = `${row.event}:${row.value}`;
+      const total = totals.get(id) ?? { event: row.event, value: row.value, count: 0 };
+      total.count += row.count; totals.set(id, total);
+      if (dimension === "source") outreach.classified[row.event] += row.count;
+    }
+    outreach[key] = [...totals.values()].sort((a, b) => a.event.localeCompare(b.event) || b.count - a.count || a.value.localeCompare(b.value));
+  }
+  if (available) for (const key of KFH_ATTRIBUTABLE_KEYS) outreach.unclassified[key] = windows.last_7_complete_days.counts![key] - outreach.classified[key];
   const report: KfhReport = {
-    view: "kfh", report_contract_version: "1.1", site_key: KFH_SITE_KEY, generated_at: now.toISOString(),
+    view: "kfh", report_contract_version: "1.2", site_key: KFH_SITE_KEY, generated_at: now.toISOString(),
     source: {
       availability: available ? "available" : "unavailable",
       reason: !available ? "query_failed" : eventDays.length ? "observed_activity" : "no_observed_history",
@@ -131,7 +188,8 @@ function kfhReportFromRows(input: Row[] | null, now: Date): KfhReport {
     },
     windows,
     discovery_last_7_complete_days: available ? { sources: rank("source"), campaigns: rank("campaign"), contents: rank("content") } : null,
-    limitations: KFH_LIMITATIONS,
+    outreach_last_7_complete_days: available ? outreach : null,
+    limitations: KFH_OUTREACH_LIMITATIONS,
   };
   return isKfhReport(report) ? report : kfhReportFromRows(null, now);
 }
