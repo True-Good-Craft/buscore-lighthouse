@@ -1,5 +1,19 @@
 # Lighthouse — Source of Truth
 
+## Review candidate — 1.34.0, public outreach action attribution
+
+Jamie authorized the coordinated code changes, review branches, commits/pushes and pull requests on 2026-09-09. These are review candidates; this work does not authorize or record a main merge, migration application, production deployment, secret or settings change. The current production report pasted by Jamie contains observed activity; it is not a website-health or outcome receipt.
+
+The coordinated target is Kingston 0.2.0 (ingestion v3), Lighthouse 1.34.0 (report 1.2) and Smith 0.29.0 (strict 1.0/1.1/1.2 consumer). Deploy Smith first; apply Lighthouse migration 0017 after its review and before manually promoting Lighthouse; deploy the website last. Preserve cached v1/v2 ingestion and old reports for compatibility. See the release review for exact scope and rollback.
+
+Ingestion v3 requires all three fixed public labels on page_view and the existing four broad clicks. It adds only source reddit, campaign outreach_2026_09 and content post_02. Installation remains an unattributed browser signal. v1/v2 parsing stays exact and does not accept action attribution or new enums.
+
+One atomic D1 batch maintains the original kfh_daily totals and page margins and the new kfh_outreach_daily independent day/event/dimension/value margins. New labels map to old fallbacks in the original table so old Workers can read it. There are no raw events, combined source/campaign/content tuples, visitor/session IDs, provider IDs, destinations, search/filter/location data or new abuse identifiers. Existing GPC/DNT, origins, body/rate limits and credentials remain. Both tables retain today plus 399 previous UTC days under the existing pruning schedule.
+
+Report 1.2 reconciles exact totals, three independent outreach margins and classified/unclassified counts. It replaces the fallback portion of page-view discovery with actual v3 labels without double counting. Historical actions stay unclassified; old page-view labels are never assigned to them. A missing new table, failed query or inconsistent report is unavailable, with null metrics. Public 204 is fail-soft receipt, not proof of persistence. No other site/report/storage semantics change.
+
+`KFH_ANALYTICS_CONTRACT.md` and `KFH_OUTREACH_RELEASE.md` govern this reviewed expansion. Two strict TypeScript contract files and three additional producer fixtures are identical in Smith. Migration 0016 remains unchanged; 0017 is additive and has not been applied.
+
 ## Current source — 1.33.0, Kingston default-on policy
 
 Jamie explicitly changed Kingston to default-on aggregate analytics with an opt-out in Your privacy and no popup, and authorized the coordinated changes and production deployment. Existing saved no choices, GPC/DNT, dev_mode and noAnalytics suppression remain effective. No additional context, identifiers, raw history, queue, retries or third-party analytics are introduced.

@@ -30,12 +30,12 @@ before(async () => {
     try { const results = []; for (const statement of statements) results.push(await statement.run()); sqlite.run("COMMIT"); return results; }
     catch (error) { sqlite.run("ROLLBACK"); throw error; }
   } };
-  for (const name of ["0008_add_site_event_rate_limit.sql", "0016_add_kfh_daily.sql"]) {
+  for (const name of ["0008_add_site_event_rate_limit.sql", "0016_add_kfh_daily.sql", "0017_add_kfh_outreach_attribution.sql"]) {
     await db.exec(fs.readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
   }
 });
 after(() => { sqlite?.close(); });
-beforeEach(async () => { await db.exec("DELETE FROM kfh_daily; DELETE FROM site_event_rate_limit;"); });
+beforeEach(async () => { await db.exec("DELETE FROM kfh_daily; DELETE FROM kfh_outreach_daily; DELETE FROM site_event_rate_limit;"); });
 
 test("strict Kingston payload rejects sensitive fields and action attribution", () => {
   assert.equal(parseKfhEvent(payload()).counter, "page_views");
@@ -176,13 +176,13 @@ test("strict response contract rejects identity, unsafe numbers and invented cov
 test("v2 default-on contract is explicit, isolated and persists the same bounded aggregates", async () => {
   const current = {site_key: KFH_SITE_KEY, contract_version: 2, collection_mode: "opt_out", page: "directory", event_name: "page_view"};
   assert.deepEqual(parseKfhEvent(current), parseKfhEvent(payload()));
-  for (const extra of [{consent:true}, {consent:false}, {collection_mode:"opt_in"}, {collection_mode:undefined}, {contract_version:3}, {resource_id:"private"}, {search:"private"}]) assert.equal(parseKfhEvent({...current,...extra}), null);
+  for (const extra of [{consent:true}, {consent:false}, {collection_mode:"opt_in"}, {collection_mode:undefined}, {contract_version:4}, {resource_id:"private"}, {search:"private"}]) assert.equal(parseKfhEvent({...current,...extra}), null);
   assert.equal(parseKfhEvent({...payload(),collection_mode:"opt_out"}), null);
   await ingestKfhEvent(current, db, KFH_ORIGINS[0], async () => true, now);
   const rows = await db.prepare("SELECT metric,value,count FROM kfh_daily ORDER BY metric").all();
   assert.equal(rows.results.length,4); assert.ok(rows.results.every(row => row.count === 1));
   const report = await buildKfhReport(db,now);
-  assert.equal(report.report_contract_version,"1.1");
+  assert.equal(report.report_contract_version,"1.2");
   assert.equal(report.limitations.counts_are,"observed_activity_not_people_or_service_outcomes");
 });
 
@@ -191,4 +191,65 @@ test("KFH report legacy compatibility cannot mislabel current default-on counts"
   assert.equal(isKfhReport(legacy),true);
   assert.equal(isKfhReport({...legacy,report_contract_version:"1.1"}),false);
   assert.equal(isKfhReport({...legacy,report_contract_version:1.0}),false);
+});
+
+const v3 = (overrides = {}) => ({ site_key: KFH_SITE_KEY, contract_version: 3, collection_mode: "opt_out", page: "directory", event_name: "page_view", source: "reddit", campaign: "outreach_2026_09", content: "post_02", ...overrides });
+test("v3 accepts only fixed outreach labels and broad events, preserving v1/v2 rejection", () => {
+  for (const event of [{}, { event_name: "contact_click", event_value: "resource_call" }, { event_name: "contact_click", event_value: "help_211" }, { event_name: "outbound_click", event_value: "directions" }, { event_name: "outbound_click", event_value: "official_source" }]) assert.equal(parseKfhEvent(v3(event)).outreach, true);
+  for (const change of [{ source: undefined }, { campaign: undefined }, { content: undefined }, { source: "private-person" }, { consent: true }, { session_id: "private" }, { resource_id: "private" }, { search: "private" }, { referrer: "private" }, { event_value: "extra" }, { event_name: "pwa_install" }, { event_name: "outbound_click", event_value: "resource_call" }, { contract_version: 2 }]) assert.equal(parseKfhEvent(v3(change)), null, JSON.stringify(change));
+  const { source, campaign, content, ...install } = v3({ event_name: "pwa_install" });
+  assert.deepEqual(parseKfhEvent(install), { counter: "pwa_installs" });
+  assert.equal(parseKfhEvent({ ...install, event_value: "device" }), null);
+});
+
+test("v3 persists atomic independent margins; legacy totals remain readable on rollback", async () => {
+  const accept = body => ingestKfhEvent(body, db, KFH_ORIGINS[0], async () => true, new Date("2026-09-03T12:00:00Z"));
+  await accept(payload({ source: "facebook", campaign: "launch_2026_09", content: "post_01" }));
+  await accept(v3()); await accept(v3());
+  await accept(v3({ event_name: "outbound_click", event_value: "directions" }));
+  await accept(payload({ event_name: "contact_click", event_value: "resource_call" }));
+  const report = await buildKfhReport(db, now);
+  assert.equal(isKfhReport(report), true);
+  assert.deepEqual(report.discovery_last_7_complete_days.sources, [{ value: "reddit", count: 2 }, { value: "facebook", count: 1 }]);
+  const outreach = report.outreach_last_7_complete_days;
+  assert.equal(outreach.classified.page_views, 2); assert.equal(outreach.unclassified.page_views, 1);
+  assert.equal(outreach.classified.directions, 1); assert.equal(outreach.unclassified.resource_calls, 1);
+  assert.ok(outreach.sources.every(row => row.value === "reddit"));
+  assert.equal((await db.prepare("SELECT count FROM kfh_daily WHERE metric='source' AND value='other'").first()).count, 2);
+  assert.equal((await db.prepare("SELECT count FROM kfh_daily WHERE metric='campaign' AND value='none'").first()).count, 2);
+  const rows = (await db.prepare("SELECT * FROM kfh_outreach_daily").all()).results;
+  assert.equal(rows.length, 6);
+  assert.ok(rows.every(row => Object.keys(row).sort().join(',') === 'count,day,dimension,event,value'));
+  assert.deepEqual(report, JSON.parse(fs.readFileSync(new URL('../contracts/kfh-v1/outreach-sample.json', import.meta.url), 'utf8')));
+  await db.exec(fs.readFileSync(new URL('../migrations/0017_add_kfh_outreach_attribution.sql', import.meta.url), 'utf8'));
+  assert.deepEqual(await buildKfhReport(db, now), report);
+});
+
+test("failure in new attribution rolls back both tables, while missing migration reports unavailable", async () => {
+  await db.exec("CREATE TRIGGER fixture_reject_outreach BEFORE INSERT ON kfh_outreach_daily WHEN NEW.dimension='content' BEGIN SELECT RAISE(ABORT, 'fixture'); END;");
+  try {
+    await assert.rejects(ingestKfhEvent(v3(), db, KFH_ORIGINS[0], async () => true, now));
+    for (const table of ['kfh_daily', 'kfh_outreach_daily']) assert.equal((await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first()).n, 0);
+  } finally { await db.exec('DROP TRIGGER fixture_reject_outreach'); }
+  const noMigration = { prepare(sql) { if (sql.includes('kfh_outreach_daily')) throw new Error('missing table'); return db.prepare(sql); } };
+  const report = await buildKfhReport(noMigration, now);
+  assert.equal(report.source.reason, 'query_failed'); assert.equal(report.outreach_last_7_complete_days, null);
+  assert.deepEqual(report, JSON.parse(fs.readFileSync(new URL('../contracts/kfh-v1/outreach-unavailable.json', import.meta.url), 'utf8')));
+});
+
+test("v3 UTC windows, retention and inconsistent margins fail honestly", async () => {
+  const accept = (date) => ingestKfhEvent(v3(), db, KFH_ORIGINS[0], async () => true, date);
+  const empty = await buildKfhReport(db, now);
+  assert.deepEqual(empty, JSON.parse(fs.readFileSync(new URL('../contracts/kfh-v1/outreach-empty.json', import.meta.url), 'utf8')));
+  for (const offset of [-400, -399, -8, -7, -1, 0]) await accept(new Date(now.getTime() + offset * 86400000));
+  const report = await buildKfhReport(db, now);
+  assert.equal(report.outreach_last_7_complete_days.classified.page_views, 2);
+  assert.deepEqual(Object.values(report.windows).map(w => w.counts.page_views), [1, 1, 2, 1, 3]);
+  await pruneKfhData(db, now);
+  for (const table of ['kfh_daily', 'kfh_outreach_daily']) assert.equal((await db.prepare(`SELECT COUNT(DISTINCT day) AS n FROM ${table}`).first()).n, 5);
+  for (const mutate of [r => r.outreach_last_7_complete_days.classified.page_views++, r => r.outreach_last_7_complete_days.sources[0].count++, r => r.outreach_last_7_complete_days.sources[0].resource_id='private', r => r.outreach_last_7_complete_days.sources[0].event='pwa_installs', r => r.outreach_last_7_complete_days.sources.push(r.outreach_last_7_complete_days.sources[0]), r => r.outreach_last_7_complete_days.sources[0].value='facebook', r => r.report_contract_version='1.1']) {
+    const changed = structuredClone(report); mutate(changed); assert.equal(isKfhReport(changed), false);
+  }
+  await db.exec("DELETE FROM kfh_outreach_daily WHERE dimension='content' AND day='2026-09-03'");
+  assert.equal((await buildKfhReport(db, now)).source.reason, 'query_failed');
 });

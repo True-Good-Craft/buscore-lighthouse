@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.34.0] - 2026-09-09 (review candidate)
+
+- Add strict KFH v3 public outreach labels on broad actions with atomic independent daily margins and additive migration 0017.
+- Preserve v1/v2 ingestion, old-table rollback compatibility and 400-day aggregate retention; emit strict report 1.2 with honest unclassified history.
+- Add matching producer/consumer fixtures, privacy/reconciliation/rollback tests and coordinated release instructions. No migration or production deployment performed.
+
 ## [1.33.0] - 2026-09-05
 
 - Added owner-authorized KFH ingestion v2 for default-on/opt-out collection without falsely asserting consent. Retained strict v1 compatibility and all suppression/privacy limits.
